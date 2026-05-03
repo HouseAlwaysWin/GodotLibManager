@@ -2,6 +2,14 @@
 
 An editor plugin for **Godot 4** that lets you browse GitHub repositories (via optional JSON registries and manual repo lists), inspect releases, download `.zip` assets, and install addons under `res://addons/`—without using the Godot Asset Library.
 
+### GitHub repository description (About box)
+
+Paste this one-line **Description** on the repo home (gear next to *About* → *Description*), or under **Settings → General**:
+
+> Godot 4 editor plugin: browse GitHub addons via JSON registries or manual repos, download release zips, and install them under `res://addons/` without the Asset Library.
+
+**Suggested topics:** `godot`, `godot-engine`, `godot-addon`, `godot-plugin`, `gdextension`
+
 ## Requirements
 
 - **Godot 4.6** (Forward Plus; other 4.x versions may work but are not explicitly verified here)
@@ -118,3 +126,7 @@ Workflow details: `.github/workflows/release.yml`.
 - **Rate limit**: Add a GitHub token in Settings or wait until the reset time shown in the panel.
 - **`zip_contains_no_addons_folder`**: The release zip does not contain a usable `addons/` tree or discoverable `plugin.cfg`; fix the published archive or project layout.
 - **Registry load errors**: Check the URL, JSON syntax, and that `owner`/`repo` are set for each plugin entry.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
