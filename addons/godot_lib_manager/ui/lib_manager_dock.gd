@@ -2,7 +2,15 @@
 extends PanelContainer
 
 const PLUGIN_CARD := preload("res://addons/godot_lib_manager/ui/plugin_card.tscn")
-const SEARCH_RESULTS_PER_PAGE := 30
+## Rows shown per Search pager step (after topic + release filters).
+const SEARCH_UI_PAGE_SIZE := 20
+const PSearchCatalogCache := preload("res://addons/godot_lib_manager/core/search_catalog_cache.gd")
+## Broad Asset Library filter when building the offline catalog (not per-user search).
+const CATALOG_ASSET_LIB_QUERY := "godot"
+## GitHub Search queries — topic-qualified repos only (no per-repo topic HTTP during catalog build).
+const CATALOG_GITHUB_QUERIES := ["topic:godot", "topic:gdextension"]
+## 3 days — must be a literal (GDScript const cannot use int() or PackedStringArray(...) ctor).
+const CATALOG_CACHE_MAX_AGE_SEC := 259200
 const PSettings := preload("res://addons/godot_lib_manager/core/settings.gd")
 const PGithubClient := preload("res://addons/godot_lib_manager/core/github_client.gd")
 const PRegistryLoader := preload("res://addons/godot_lib_manager/core/registry_loader.gd")
@@ -19,14 +27,17 @@ var _plugins: Array = []
 var _releases: Array = []
 var _selected: Dictionary = {}
 var _showing_search_results: bool = false
-var _search_github_page: int = 1
-var _search_github_total_count: int = 0
+## UI pager page (1-based): slices filtered rows from `_search_filtered_accumulator`.
+var _search_ui_page: int = 1
+## Current keyword-filtered slice of `_catalog_entries` (filled when user clicks Search).
+var _search_filtered_accumulator: Array = []
 ## Query string used for the current paginated search session (Prev/Next); avoids mismatch if LineEdit is edited.
 var _search_active_query: String = ""
-## Normalized query key for invalidating in-memory page cache when the user runs a different Search.
-var _search_cache_session_key: String = ""
-## Key `"{query}|gh_page={n}"` -> filtered plugin rows + banner stats for that page.
-var _search_page_cache: Dictionary = {}
+## Offline catalog: populated at startup (disk) then optionally refreshed (network).
+var _catalog_entries: Array = []
+var _catalog_ready: bool = false
+var _catalog_saved_unix: int = 0
+var _catalog_refresh_running: bool = false
 
 @onready var _plugin_list: VBoxContainer = %PluginList
 @onready var _detail_icon: TextureRect = %DetailIcon
@@ -50,9 +61,12 @@ var _search_page_cache: Dictionary = {}
 @onready var _search_btn: Button = %SearchButton
 @onready var _search_banner: Label = %SearchBanner
 @onready var _search_pager: HBoxContainer = %SearchPager
+@onready var _search_first_btn: Button = %SearchFirstPage
 @onready var _search_prev_btn: Button = %SearchPrevPage
-@onready var _search_page_label: Label = %SearchPageLabel
+@onready var _search_page_numbers: HBoxContainer = %SearchPageNumbers
 @onready var _search_next_btn: Button = %SearchNextPage
+@onready var _search_last_btn: Button = %SearchLastPage
+@onready var _search_meta_label: Label = %SearchPagerMetaLabel
 @onready var _add_to_my_list_btn: Button = %AddToMyListButton
 @onready var _error_dialog: AcceptDialog = %ErrorDialog
 @onready var _success_dialog: AcceptDialog = %SuccessDialog
@@ -79,8 +93,10 @@ func _ready() -> void:
 	_remove_repo_btn.pressed.connect(_on_remove_repo_pressed)
 	_search_btn.pressed.connect(_on_github_search_pressed)
 	_search_edit.text_submitted.connect(_on_github_search_submitted)
+	_search_first_btn.pressed.connect(_on_search_first_page_pressed)
 	_search_prev_btn.pressed.connect(_on_search_prev_page_pressed)
 	_search_next_btn.pressed.connect(_on_search_next_page_pressed)
+	_search_last_btn.pressed.connect(_on_search_last_page_pressed)
 	_add_to_my_list_btn.pressed.connect(_on_add_to_my_list_pressed)
 	_open_repo_btn.pressed.connect(_on_open_repo_page_pressed)
 	_open_al_btn.pressed.connect(_on_open_asset_lib_page_pressed)
@@ -95,7 +111,15 @@ func _ready() -> void:
 	_remove_repo_confirm.confirmed.connect(_on_remove_repo_confirmed)
 	%SaveCloseButton.pressed.connect(_on_save_settings_pressed)
 	if editor_plugin:
-		await _refresh_plugin_list()
+		## Do not await network/registry inside _ready — it can leave the main screen blank until it finishes.
+		call_deferred("_deferred_dock_bootstrap")
+
+
+func _deferred_dock_bootstrap() -> void:
+	if not editor_plugin:
+		return
+	await _refresh_plugin_list()
+	call_deferred("_start_catalog_build")
 
 
 func _status(msg: String) -> void:
@@ -194,68 +218,121 @@ func _github_items_to_plugin_entries(items: Array) -> Array:
 	return out
 
 
-func _topic_is_godot_related(tag: String) -> bool:
-	var s := tag.strip_edges().to_lower()
-	if s.is_empty():
-		return false
-	if s.contains("godot"):
-		return true
-	if s == "gdextension" or s.begins_with("gdextension-"):
-		return true
-	if s == "gdnative":
-		return true
-	return false
+func _filled_ui_pages_count() -> int:
+	var n := _search_filtered_accumulator.size()
+	if n <= 0:
+		return 1
+	return maxi(1, int(ceil(float(n) / float(SEARCH_UI_PAGE_SIZE))))
 
 
-func _topics_have_godot_relation(topics: Array) -> bool:
-	for t in topics:
-		if _topic_is_godot_related(str(t)):
-			return true
-	return false
-
-
-## Drops GitHub search hits with no Godot-related repository topics (GitHub "About" tags).
-func _filter_github_search_items_by_godot_topics(items: Array) -> Array:
+func _filter_catalog_entries_local(all_entries: Array, q: String) -> Array:
+	var qn := q.strip_edges().to_lower()
+	if qn.is_empty():
+		var dup: Array = []
+		for e in all_entries:
+			if e is Dictionary:
+				dup.append((e as Dictionary).duplicate(true))
+		return dup
+	var tokens := qn.split(" ", false)
 	var out: Array = []
-	var idx := 0
-	var total := items.size()
-	for it in items:
-		if not it is Dictionary:
+	for e in all_entries:
+		if not e is Dictionary:
 			continue
-		var d: Dictionary = it
-		var fn := str(d.get("full_name", ""))
-		var parts := fn.split("/", false)
-		if parts.size() < 2:
-			continue
-		var owner := str(parts[0])
-		var repo := str(parts[1])
-		idx += 1
-		_status("Filtering by topics (%s/%s)…" % [str(idx), str(total)])
-		var topics: Array = []
-		var tv: Variant = d.get("topics", [])
-		if tv is Array:
-			topics = tv.duplicate()
-		if topics.is_empty():
-			var tres: Dictionary = await _github.fetch_repository_topics(owner, repo)
-			_update_rate_label()
-			if not tres.get("ok", false):
-				out.append(d)
+		var d: Dictionary = e
+		var hay := (
+			"%s %s %s %s"
+			% [
+				str(d.get("name", "")),
+				str(d.get("owner", "")),
+				str(d.get("repo", "")),
+				str(d.get("description", "")),
+			]
+		).to_lower()
+		var ok := true
+		for t in tokens:
+			var tt := str(t).strip_edges()
+			if tt.is_empty():
 				continue
-			var pt: Variant = tres.get("topics", [])
-			if pt is Array:
-				topics = pt.duplicate()
-		if topics.is_empty():
-			continue
-		if _topics_have_godot_relation(topics):
-			out.append(d)
+			if not hay.contains(tt):
+				ok = false
+				break
+		if ok:
+			out.append(d.duplicate(true))
 	return out
 
 
-func _merge_search_results(al: Dictionary, gh: Dictionary) -> Array:
+func _ensure_catalog_ready() -> void:
+	var spins := 0
+	while not _catalog_ready:
+		spins += 1
+		if spins > 7200:
+			if not _catalog_ready:
+				_catalog_ready = true
+				_show_error("Search catalog timed out. Restart the editor or try again.")
+			break
+		if spins % 45 == 1:
+			_status("Waiting for search catalog…")
+		await get_tree().process_frame
+
+
+func _start_catalog_build() -> void:
+	var snap: Dictionary = PSearchCatalogCache.load_snapshot()
+	var age_sec := 999999999
+	if snap.get("ok", false) and snap.entries.size() > 0:
+		_catalog_entries = snap.entries
+		_catalog_saved_unix = int(snap.get("saved_unix", 0))
+		_catalog_ready = true
+		age_sec = Time.get_unix_time_from_system() - _catalog_saved_unix
+		_status(
+			"Search catalog: %s entries (disk). Filtering is local — no GitHub search per keystroke."
+			% str(_catalog_entries.size())
+		)
+	else:
+		_status("Building search catalog (first run — one-time network fetch)…")
+	if _catalog_entries.is_empty():
+		await _fetch_catalog_from_network()
+	elif age_sec > CATALOG_CACHE_MAX_AGE_SEC:
+		## Delay so refresh does not overlap with immediate UI use (no API during pager clicks).
+		call_deferred("_catalog_refresh_stale_delayed")
+
+
+func _catalog_refresh_stale_delayed() -> void:
+	await get_tree().create_timer(90.0).timeout
+	if _catalog_refresh_running:
+		return
+	await _catalog_refresh_stale_async()
+
+
+func _catalog_refresh_stale_async() -> void:
+	if _catalog_refresh_running:
+		return
+	_catalog_refresh_running = true
+	_status("Refreshing search catalog in background…")
+	await _fetch_catalog_from_network()
+	_catalog_refresh_running = false
+	_status("Catalog refreshed: %s entries." % str(_catalog_entries.size()))
+
+
+func _fetch_catalog_from_network() -> void:
 	var seen: Dictionary = {}
-	var out: Array = []
-	if al.get("ok", false):
-		for p in al.get("plugins", []):
+	var merged: Array = []
+
+	var al_total_known := -1
+	var al_page := 0
+	while true:
+		_status("Catalog — Asset Library page %s…" % str(al_page + 1))
+		var al_res: Dictionary = await _github.search_asset_library_plugins(
+			CATALOG_ASSET_LIB_QUERY, 30, al_page
+		)
+		_update_rate_label()
+		if not al_res.get("ok", false):
+			break
+		if al_total_known < 0:
+			al_total_known = int(al_res.get("total_matches", 0))
+		var plugs: Array = al_res.get("plugins", [])
+		if plugs.is_empty():
+			break
+		for p in plugs:
 			if not p is Dictionary:
 				continue
 			var d: Dictionary = p
@@ -265,79 +342,53 @@ func _merge_search_results(al: Dictionary, gh: Dictionary) -> Array:
 			if k.is_empty() or seen.has(k):
 				continue
 			seen[k] = true
-			out.append(d)
-	if gh.get("ok", false):
-		for p2 in _github_items_to_plugin_entries(gh.get("items", [])):
-			if not p2 is Dictionary:
-				continue
-			var d2: Dictionary = p2
-			var k2 := PRegistryLoader.canonical_owner_repo(
-				"%s/%s" % [str(d2.get("owner", "")), str(d2.get("repo", ""))]
-			)
-			if k2.is_empty() or seen.has(k2):
-				continue
-			seen[k2] = true
-			out.append(d2)
-	return out
+			merged.append(d.duplicate(true))
+		al_page += 1
+		if al_total_known >= 0 and (al_page * 30) >= al_total_known:
+			break
+		if al_page > 400:
+			push_warning("GodotLibManager: Asset Library catalog page guard")
+			break
 
+	var gh_pp := 100
+	for qry in CATALOG_GITHUB_QUERIES:
+		var gh_total := 0
+		var page := 1
+		while page <= 100:
+			_status("Catalog — GitHub «%s» page %s…" % [qry, str(page)])
+			var gh: Dictionary = await _github.search_repositories(qry, page, gh_pp)
+			_update_rate_label()
+			if not gh.get("ok", false):
+				break
+			if page == 1:
+				gh_total = int(gh.get("total", 0))
+			var items: Array = gh.get("items", [])
+			if items.is_empty():
+				break
+			for ent in _github_items_to_plugin_entries(items):
+				if not ent is Dictionary:
+					continue
+				var ed: Dictionary = ent
+				var k2 := PRegistryLoader.canonical_owner_repo(
+					"%s/%s" % [str(ed.get("owner", "")), str(ed.get("repo", ""))]
+				)
+				if k2.is_empty() or seen.has(k2):
+					continue
+				seen[k2] = true
+				merged.append(ed.duplicate(true))
+			var max_pages := maxi(1, int(ceil(float(mini(gh_total, 1000)) / float(gh_pp))))
+			page += 1
+			if page > max_pages:
+				break
 
-func _search_cache_key(normalized_query: String, github_page: int) -> String:
-	return "%s|gh_page=%s" % [normalized_query, str(github_page)]
-
-
-func _duplicate_plugins_array(arr: Array) -> Array:
-	var out: Array = []
-	for e in arr:
-		if e is Dictionary:
-			out.append((e as Dictionary).duplicate(true))
-	return out
-
-
-func _store_search_page_cache(
-	key: String, merged_n: int, al_n: int, al_total: int
-) -> void:
-	_search_page_cache[key] = {
-		"plugins": _duplicate_plugins_array(_plugins),
-		"gh_total": _search_github_total_count,
-		"merged_n": merged_n,
-		"al_n": al_n,
-		"al_total": al_total,
-	}
-
-
-func _restore_search_page_from_cache(key: String) -> void:
-	var pack: Variant = _search_page_cache.get(key, {})
-	if not pack is Dictionary:
-		return
-	var dpack: Dictionary = pack
-	_plugins = _duplicate_plugins_array(dpack.get("plugins", []))
-	_search_github_total_count = int(dpack.get("gh_total", 0))
-	_showing_search_results = true
-	var merged_n := int(dpack.get("merged_n", 0))
-	var al_n := int(dpack.get("al_n", 0))
-	var al_total := int(dpack.get("al_total", 0))
-	var gh_total := _search_github_total_count
-	_clear_detail_panel()
-	_search_banner.text = (
-		"Asset Library + GitHub — %s repo(s) with releases (from %s merged). "
-		+ "GitHub hits need Godot-related topics + ≥1 release. "
-		+ "Asset Library: %s in raw list (~%s matches). GitHub ~%s indexed. "
-		+ "Use Prev/Next for more GitHub pages (cached pages skip API). Refresh restores your saved list."
-	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
-	_search_banner.visible = true
-	_update_search_pager()
-	_rebuild_plugin_cards()
+	_catalog_entries = merged
+	_catalog_saved_unix = Time.get_unix_time_from_system()
+	_catalog_ready = true
+	PSearchCatalogCache.save_snapshot(_catalog_entries)
 	_status(
-		"Search: %s rows (page %s · cached · GitHub ~%s)."
-		% [str(_plugins.size()), str(_search_github_page), str(gh_total)]
+		"Catalog ready: %s entries (saved). Release list loads when you select a repo."
+		% str(_catalog_entries.size())
 	)
-
-
-func _max_github_search_pages() -> int:
-	if _search_github_total_count <= 0:
-		return 1
-	var cap := mini(_search_github_total_count, 1000)
-	return maxi(1, int(ceil(float(cap) / float(SEARCH_RESULTS_PER_PAGE))))
 
 
 func _update_search_pager() -> void:
@@ -347,128 +398,160 @@ func _update_search_pager() -> void:
 	_search_pager.visible = show
 	if not show:
 		return
-	var max_p := _max_github_search_pages()
+	var filled := _filled_ui_pages_count()
+	var max_p := filled
+	var at_end := _search_ui_page >= filled
+	if is_instance_valid(_search_first_btn):
+		_search_first_btn.disabled = _search_ui_page <= 1
 	if is_instance_valid(_search_prev_btn):
-		_search_prev_btn.disabled = _search_github_page <= 1
+		_search_prev_btn.disabled = _search_ui_page <= 1
 	if is_instance_valid(_search_next_btn):
-		_search_next_btn.disabled = _search_github_page >= max_p
-	if is_instance_valid(_search_page_label):
-		_search_page_label.text = (
-			"Page %s / %s · GitHub ~%s hits (API shows up to ~1000)"
-			% [str(_search_github_page), str(max_p), str(_search_github_total_count)]
+		_search_next_btn.disabled = at_end
+	if is_instance_valid(_search_last_btn):
+		_search_last_btn.disabled = filled <= 1
+	_rebuild_search_page_number_buttons(max_p)
+	if is_instance_valid(_search_meta_label):
+		var cat_n := _catalog_entries.size()
+		_search_meta_label.text = (
+			"Catalog %s entries · matches %s · page %s/%s · filter/search: local only"
+			% [str(cat_n), str(_search_filtered_accumulator.size()), str(_search_ui_page), str(max_p)]
 		)
 
 
-func _on_search_prev_page_pressed() -> void:
-	if _search_github_page <= 1:
+func _rebuild_search_page_number_buttons(max_p: int) -> void:
+	if not is_instance_valid(_search_page_numbers):
 		return
-	_search_github_page -= 1
+	for c in _search_page_numbers.get_children():
+		_search_page_numbers.remove_child(c)
+		c.free()
+	if max_p <= 0:
+		return
+	var span := mini(10, max_p)
+	var cur := _search_ui_page
+	var start := maxi(1, mini(cur - 4, max_p - span + 1))
+	var end := mini(max_p, start + span - 1)
+	for p in range(start, end + 1):
+		var btn := Button.new()
+		btn.text = str(p)
+		btn.flat = true
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.custom_minimum_size = Vector2(30, 26)
+		var pg := p
+		btn.disabled = pg == cur
+		btn.pressed.connect(_on_search_page_number_pressed.bind(pg))
+		_search_page_numbers.add_child(btn)
+
+
+func _on_search_page_number_pressed(page: int) -> void:
+	if page == _search_ui_page:
+		return
+	var mx := _filled_ui_pages_count()
+	if page < 1 or page > mx:
+		return
+	_search_ui_page = page
+	await _run_paged_search(false)
+
+
+func _on_search_first_page_pressed() -> void:
+	if _search_ui_page <= 1:
+		return
+	_search_ui_page = 1
+	await _run_paged_search(false)
+
+
+func _on_search_last_page_pressed() -> void:
+	var mx := _filled_ui_pages_count()
+	if _search_ui_page >= mx:
+		return
+	_search_ui_page = mx
+	await _run_paged_search(false)
+
+
+func _on_search_prev_page_pressed() -> void:
+	if _search_ui_page <= 1:
+		return
+	_search_ui_page -= 1
 	await _run_paged_search(false)
 
 
 func _on_search_next_page_pressed() -> void:
-	if _search_github_page >= _max_github_search_pages():
+	var filled := _filled_ui_pages_count()
+	if _search_ui_page >= filled:
 		return
-	_search_github_page += 1
+	_search_ui_page += 1
 	await _run_paged_search(false)
 
 
 func _run_paged_search(reset_page: bool) -> void:
 	var q_input := _search_edit.text.strip_edges()
-	if q_input.is_empty():
-		return
 	var q := q_input
 	if not reset_page:
 		q = _search_active_query.strip_edges()
 		if q.is_empty():
 			q = q_input
+
+	## Pager must never await network — only Search waits for the catalog build.
 	if reset_page:
-		_search_github_page = 1
-	var qn := q.strip_edges().to_lower()
-	if reset_page:
-		if _search_cache_session_key != qn:
-			_search_page_cache.clear()
-		_search_cache_session_key = qn
-	var cache_key := _search_cache_key(qn, _search_github_page)
-	if _search_page_cache.has(cache_key):
-		_restore_search_page_from_cache(cache_key)
-		return
-	_clear_detail_panel()
-	_status("Searching Godot Asset Library and GitHub…")
-	var al_page := maxi(0, _search_github_page - 1)
-	var al_res: Dictionary = await _github.search_asset_library_plugins(
-		q, SEARCH_RESULTS_PER_PAGE, al_page
-	)
-	var gh_res: Dictionary = await _github.search_repositories(
-		q, _search_github_page, SEARCH_RESULTS_PER_PAGE
-	)
-	_update_rate_label()
-	if gh_res.get("ok", false):
-		_search_github_total_count = int(gh_res.get("total", 0))
+		await _ensure_catalog_ready()
+		if not _catalog_ready:
+			return
 	else:
-		_search_github_total_count = 0
-	if not al_res.get("ok", false) and not gh_res.get("ok", false):
-		var e1 := str(al_res.get("error", ""))
-		var e2 := str(gh_res.get("error", ""))
-		_show_error("Search failed.\nAsset Library: %s\nGitHub: %s" % [e1, e2])
-		_status("Search failed.")
-		_showing_search_results = false
-		_update_search_pager()
-		return
-	if gh_res.get("ok", false):
-		var raw_items: Array = gh_res.get("items", [])
-		_status("Filtering GitHub results: require Godot-related topic tags…")
-		gh_res["items"] = await _filter_github_search_items_by_godot_topics(raw_items)
-	_plugins = _merge_search_results(al_res, gh_res)
-	var merged_n := _plugins.size()
-	_status("Filtering: keeping repos with ≥1 GitHub release…")
-	_plugins = await _filter_search_entries_with_releases(_plugins)
+		if not _catalog_ready:
+			_status("Catalog still loading — pagination uses no API once ready.")
+			return
+
+	if reset_page:
+		_search_ui_page = 1
+		_clear_detail_panel()
+		_search_filtered_accumulator = _filter_catalog_entries_local(_catalog_entries, q)
+	else:
+		_clear_detail_panel()
+
+	var acc_n := _search_filtered_accumulator.size()
+	var start_i := (_search_ui_page - 1) * SEARCH_UI_PAGE_SIZE
+	if acc_n > 0 and start_i >= acc_n:
+		_search_ui_page = maxi(1, _filled_ui_pages_count())
+		start_i = (_search_ui_page - 1) * SEARCH_UI_PAGE_SIZE
+
+	_plugins = []
+	var end_i := mini(start_i + SEARCH_UI_PAGE_SIZE, acc_n)
+	if start_i < acc_n:
+		for i in range(start_i, end_i):
+			var row: Variant = _search_filtered_accumulator[i]
+			if row is Dictionary:
+				_plugins.append((row as Dictionary).duplicate(true))
+
 	_showing_search_results = true
-	var al_total := 0
-	var al_n := 0
-	if al_res.get("ok", false):
-		al_total = int(al_res.get("total_matches", 0))
-		var ap: Variant = al_res.get("plugins", [])
-		al_n = ap.size() if ap is Array else 0
-	var gh_total: int = _search_github_total_count
+	var filtered_total := acc_n
+	var catalog_total := _catalog_entries.size()
 	_search_active_query = q.strip_edges()
-	_store_search_page_cache(cache_key, merged_n, al_n, al_total)
+	var age_h := int((Time.get_unix_time_from_system() - _catalog_saved_unix) / 3600.0)
 	_search_banner.text = (
-		"Asset Library + GitHub — %s repo(s) with releases (from %s merged). "
-		+ "GitHub hits need Godot-related topics + ≥1 release. "
-		+ "Asset Library: %s in raw list (~%s matches). GitHub ~%s indexed. "
-		+ "Use Prev/Next for more GitHub pages (cached pages skip API). Refresh restores your saved list."
-	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
+		"Offline catalog — %s match(es), showing %s on this page (%s per page). "
+		+ "Catalog holds %s repos (Asset Library + GitHub topic snapshot). "
+		+ "Keyword search does not call GitHub. Releases load when you select a repo. "
+		+ "Cache age ~%s h. My List: saved registries."
+	) % [
+		str(filtered_total),
+		str(_plugins.size()),
+		str(SEARCH_UI_PAGE_SIZE),
+		str(catalog_total),
+		str(maxi(0, age_h)),
+	]
 	_search_banner.visible = true
 	_update_search_pager()
 	_rebuild_plugin_cards()
-	_status(
-		"Search: %s rows (page %s · Asset Library batch %s · GitHub ~%s)."
-		% [str(_plugins.size()), str(_search_github_page), str(al_n), str(gh_total)]
-	)
-
-
-func _filter_search_entries_with_releases(entries: Array) -> Array:
-	var out: Array = []
-	var idx := 0
-	var total := entries.size()
-	for e in entries:
-		if not e is Dictionary:
-			continue
-		var d: Dictionary = e
-		var owner := str(d.get("owner", "")).strip_edges()
-		var repo := str(d.get("repo", "")).strip_edges()
-		if owner.is_empty() or repo.is_empty():
-			continue
-		idx += 1
-		_status("Checking GitHub releases (%s/%s)…" % [str(idx), str(total)])
-		var chk: Dictionary = await _github.check_repo_has_any_release(owner, repo)
-		_update_rate_label()
-		if chk.get("uncertain", false):
-			out.append(d)
-		elif chk.get("has_releases", false):
-			out.append(d)
-	return out
+	var pages := _filled_ui_pages_count()
+	if reset_page:
+		_status(
+			"Filtered %s / %s catalog · page %s/%s."
+			% [str(filtered_total), str(catalog_total), str(_search_ui_page), str(pages)]
+		)
+	else:
+		_status(
+			"Page %s/%s · %s rows · %s matches (local)."
+			% [str(_search_ui_page), str(pages), str(_plugins.size()), str(filtered_total)]
+		)
 
 
 func _on_github_search_pressed() -> void:
@@ -542,8 +625,8 @@ func _rebuild_plugin_cards() -> void:
 		var hint := Label.new()
 		if _showing_search_results:
 			hint.text = (
-				"No repositories with at least one GitHub release matched.\n"
-				+ "Try different keywords, or press Refresh."
+				"No matches in the offline catalog for this keyword.\n"
+				+ "Try other words, clear the box to browse all, or open My List."
 			)
 		else:
 			hint.text = "No plugins yet.\n• Use Search — results appear in this list.\n• Add repo… — paste owner/repo or a github.com URL.\n• Token… — optional PAT for higher API limits."
@@ -695,11 +778,9 @@ func _on_refresh_pressed() -> void:
 
 func _refresh_plugin_list() -> void:
 	_showing_search_results = false
-	_search_github_page = 1
-	_search_github_total_count = 0
+	_search_ui_page = 1
 	_search_active_query = ""
-	_search_cache_session_key = ""
-	_search_page_cache.clear()
+	_search_filtered_accumulator.clear()
 	if _search_banner:
 		_search_banner.visible = false
 	if is_instance_valid(_search_pager):

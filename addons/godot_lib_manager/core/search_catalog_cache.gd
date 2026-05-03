@@ -1,0 +1,47 @@
+extends RefCounted
+
+## Persists the offline search catalog under user:// (Asset Library + GitHub snapshot).
+
+const CACHE_PATH := "user://gdlm_search_catalog.json"
+const VERSION := 1
+
+
+static func load_snapshot() -> Dictionary:
+	var f := FileAccess.open(CACHE_PATH, FileAccess.READ)
+	if f == null:
+		return {"ok": false, "entries": [], "saved_unix": 0}
+	var text := f.get_as_text()
+	f.close()
+	var parsed: Variant = JSON.parse_string(text)
+	if parsed == null or not parsed is Dictionary:
+		return {"ok": false, "entries": [], "saved_unix": 0}
+	var root: Dictionary = parsed
+	var entries: Array = []
+	var ev: Variant = root.get("entries", [])
+	if ev is Array:
+		for x in ev:
+			if x is Dictionary:
+				entries.append((x as Dictionary).duplicate(true))
+	return {
+		"ok": true,
+		"entries": entries,
+		"saved_unix": int(root.get("saved_unix", 0)),
+	}
+
+
+static func save_snapshot(entries: Array) -> void:
+	var packed: Array = []
+	for e in entries:
+		if e is Dictionary:
+			packed.append((e as Dictionary).duplicate(true))
+	var root := {
+		"version": VERSION,
+		"saved_unix": Time.get_unix_time_from_system(),
+		"entries": packed,
+	}
+	var f := FileAccess.open(CACHE_PATH, FileAccess.WRITE)
+	if f == null:
+		push_warning("GdlmSearchCatalogCache: could not write %s" % CACHE_PATH)
+		return
+	f.store_string(JSON.stringify(root))
+	f.close()

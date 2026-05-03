@@ -28,7 +28,7 @@ layout_mode = 2
 [node name="RefreshButton" type="Button" parent="RootVBox/Toolbar"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "Refresh"
+text = "My List"
 
 [node name="AddRepoButton" type="Button" parent="RootVBox/Toolbar"]
 unique_name_in_owner = true
@@ -69,27 +69,61 @@ text = "Search"
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
+
+[node name="SearchFirstPage" type="Button" parent="RootVBox/SearchPager"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+flat = true
+text = "First"
 
 [node name="SearchPrevPage" type="Button" parent="RootVBox/SearchPager"]
 unique_name_in_owner = true
 layout_mode = 2
 disabled = true
-text = "◀ Prev"
+flat = true
+text = "Previous"
 
-[node name="SearchPageLabel" type="Label" parent="RootVBox/SearchPager"]
+[node name="SepPagerLeft" type="Label" parent="RootVBox/SearchPager"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.42, 0.46, 0.54, 1)
+theme_override_font_sizes/font_size = 13
+text = "|"
+
+[node name="SearchPageNumbers" type="HBoxContainer" parent="RootVBox/SearchPager"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_horizontal = 3
-theme_override_colors/font_color = Color(0.58, 0.65, 0.76, 1)
-theme_override_font_sizes/font_size = 12
-text = ""
+theme_override_constants/separation = 3
+
+[node name="SepPagerRight" type="Label" parent="RootVBox/SearchPager"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.42, 0.46, 0.54, 1)
+theme_override_font_sizes/font_size = 13
+text = "|"
 
 [node name="SearchNextPage" type="Button" parent="RootVBox/SearchPager"]
 unique_name_in_owner = true
 layout_mode = 2
 disabled = true
-text = "Next ▶"
+flat = true
+text = "Next"
+
+[node name="SearchLastPage" type="Button" parent="RootVBox/SearchPager"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+flat = true
+text = "Last"
+
+[node name="SearchPagerMetaLabel" type="Label" parent="RootVBox/SearchPager"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.52, 0.58, 0.68, 1)
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 2
+text = ""
 
 [node name="SearchBanner" type="Label" parent="RootVBox"]
 unique_name_in_owner = true

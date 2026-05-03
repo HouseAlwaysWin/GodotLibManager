@@ -42,6 +42,8 @@ func _enter_tree() -> void:
 	else:
 		_main_screen.layout_mode = 1
 		_main_screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# Extra safety: some editor builds give the main-screen host a zero minimum; fill the viewport.
+	_main_screen.custom_minimum_size = Vector2(64, 64)
 	_make_visible(false)
 
 
