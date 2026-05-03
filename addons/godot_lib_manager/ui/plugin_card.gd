@@ -46,61 +46,26 @@ func _apply() -> void:
 
 
 func _start_icon_load() -> void:
-	if Engine.is_editor_hint():
-		return
+	# Editor plugins run with is_editor_hint() == true; still need to load list icons.
 	if not is_instance_valid(_icon):
 		return
 	var url := str(_plugin.get("icon_url", "")).strip_edges()
 	if url.is_empty():
 		_icon.visible = false
 		return
-	var tex: Texture2D = await _fetch_texture(url)
+	# Keep the slot visible so the list layout doesn’t jump while the request runs.
+	_icon.visible = true
+	_icon.modulate = Color(1, 1, 1, 0.35)
+	var tex: Texture2D = await GdlmImageLoader.fetch_texture_async(url, self)
 	if not is_instance_valid(self):
 		return
+	_icon.modulate = Color.WHITE
 	if tex != null:
 		_icon.texture = tex
 		_icon.visible = true
 	else:
 		_icon.texture = null
 		_icon.visible = false
-
-
-func _fetch_texture(url: String) -> Texture2D:
-	var http := HTTPRequest.new()
-	add_child(http)
-	var err: Error = http.request(url, PackedStringArray(), HTTPClient.METHOD_GET)
-	if err != OK:
-		http.queue_free()
-		return null
-	var result: Array = await http.request_completed
-	http.queue_free()
-	var code: int = result[1]
-	var body: PackedByteArray = result[3]
-	if code < 200 or code >= 300:
-		return null
-	var img := _image_from_bytes(body)
-	if img == null:
-		return null
-	return ImageTexture.create_from_image(img)
-
-
-func _image_from_bytes(data: PackedByteArray) -> Image:
-	if data.is_empty():
-		return null
-	var img := Image.new()
-	var e: Error = img.load_png_from_buffer(data)
-	if e == OK:
-		return img
-	e = img.load_jpg_from_buffer(data)
-	if e == OK:
-		return img
-	e = img.load_webp_from_buffer(data)
-	if e == OK:
-		return img
-	e = img.load_tga_from_buffer(data)
-	if e == OK:
-		return img
-	return null
 
 
 func _gui_input(event: InputEvent) -> void:

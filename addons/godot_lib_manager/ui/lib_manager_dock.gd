@@ -20,6 +20,7 @@ var _selected: Dictionary = {}
 var _showing_search_results: bool = false
 
 @onready var _plugin_list: VBoxContainer = %PluginList
+@onready var _detail_icon: TextureRect = %DetailIcon
 @onready var _detail_title: Label = %DetailTitle
 @onready var _detail_source: Label = %DetailSource
 @onready var _open_repo_btn: Button = %OpenRepoButton
@@ -129,6 +130,9 @@ func _on_github_search_submitted(_text: String) -> void:
 func _clear_detail_panel() -> void:
 	_selected.clear()
 	_releases.clear()
+	if is_instance_valid(_detail_icon):
+		_detail_icon.texture = null
+		_detail_icon.visible = false
 	_detail_title.text = "Select a plugin"
 	_detail_source.text = ""
 	_detail_desc.text = ""
@@ -172,6 +176,63 @@ func _github_items_to_plugin_entries(items: Array) -> Array:
 				"_from_github": true,
 			}
 		)
+	return out
+
+
+func _topic_is_godot_related(tag: String) -> bool:
+	var s := tag.strip_edges().to_lower()
+	if s.is_empty():
+		return false
+	if s.contains("godot"):
+		return true
+	if s == "gdextension" or s.begins_with("gdextension-"):
+		return true
+	if s == "gdnative":
+		return true
+	return false
+
+
+func _topics_have_godot_relation(topics: Array) -> bool:
+	for t in topics:
+		if _topic_is_godot_related(str(t)):
+			return true
+	return false
+
+
+## Drops GitHub search hits with no Godot-related repository topics (GitHub "About" tags).
+func _filter_github_search_items_by_godot_topics(items: Array) -> Array:
+	var out: Array = []
+	var idx := 0
+	var total := items.size()
+	for it in items:
+		if not it is Dictionary:
+			continue
+		var d: Dictionary = it
+		var fn := str(d.get("full_name", ""))
+		var parts := fn.split("/", false)
+		if parts.size() < 2:
+			continue
+		var owner := str(parts[0])
+		var repo := str(parts[1])
+		idx += 1
+		_status("Filtering by topics (%s/%s)…" % [str(idx), str(total)])
+		var topics: Array = []
+		var tv: Variant = d.get("topics", [])
+		if tv is Array:
+			topics = tv.duplicate()
+		if topics.is_empty():
+			var tres: Dictionary = await _github.fetch_repository_topics(owner, repo)
+			_update_rate_label()
+			if not tres.get("ok", false):
+				out.append(d)
+				continue
+			var pt: Variant = tres.get("topics", [])
+			if pt is Array:
+				topics = pt.duplicate()
+		if topics.is_empty():
+			continue
+		if _topics_have_godot_relation(topics):
+			out.append(d)
 	return out
 
 
@@ -243,6 +304,10 @@ func _on_github_search_pressed() -> void:
 		_show_error("Search failed.\nAsset Library: %s\nGitHub: %s" % [e1, e2])
 		_status("Search failed.")
 		return
+	if gh_res.get("ok", false):
+		var raw_items: Array = gh_res.get("items", [])
+		_status("Filtering GitHub results: require Godot-related topic tags…")
+		gh_res["items"] = await _filter_github_search_items_by_godot_topics(raw_items)
 	_plugins = _merge_search_results(al_res, gh_res)
 	var merged_n := _plugins.size()
 	_status("Filtering: keeping repos with ≥1 GitHub release…")
@@ -256,8 +321,9 @@ func _on_github_search_pressed() -> void:
 		al_n = ap.size() if ap is Array else 0
 	var gh_total: int = int(gh_res.get("total", 0)) if gh_res.get("ok", false) else 0
 	_search_banner.text = (
-		"Asset Library + GitHub — %s repo(s) with releases (from %s merged; no-release repos removed). "
-		+ "Asset Library: %s in raw list (~%s matches). GitHub: ~%s matches. "
+		"Asset Library + GitHub — %s repo(s) with releases (from %s merged). "
+		+ "GitHub hits need Godot-related topics + ≥1 release. "
+		+ "Asset Library: %s in raw list (~%s matches). GitHub index ~%s matches. "
 		+ "Press Refresh to return to your saved list."
 	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
 	_search_banner.visible = true
@@ -318,6 +384,16 @@ func _sort_releases_by_date(arr: Array) -> void:
 	)
 
 
+func _ensure_icon_url_for_plugin(d: Dictionary) -> void:
+	if str(d.get("icon_url", "")).strip_edges().is_empty():
+		var owner := str(d.get("owner", "")).strip_edges()
+		if owner.is_empty():
+			return
+		var rh := str(d.get("repo_html_url", "")).strip_edges().to_lower()
+		if rh.contains("github.com") or rh.is_empty():
+			d["icon_url"] = "https://github.com/%s.png" % owner.uri_encode()
+
+
 func _rebuild_plugin_cards() -> void:
 	for c in _plugin_list.get_children():
 		c.queue_free()
@@ -338,6 +414,7 @@ func _rebuild_plugin_cards() -> void:
 		if not p is Dictionary:
 			continue
 		var d: Dictionary = p
+		_ensure_icon_url_for_plugin(d)
 		var card: PanelContainer = PLUGIN_CARD.instantiate()
 		card.set_plugin(d)
 		var owner_s := str(d.get("owner", ""))
@@ -384,6 +461,16 @@ func _on_plugin_card_pressed(plugin: Dictionary) -> void:
 	_selected = plugin.duplicate(true)
 	if str(_selected.get("repo_html_url", "")).strip_edges().is_empty():
 		_selected["repo_html_url"] = _repo_page_url(_selected)
+	_ensure_icon_url_for_plugin(_selected)
+	if is_instance_valid(_detail_icon):
+		_detail_icon.texture = null
+		_detail_icon.visible = false
+	var icon_u := str(_selected.get("icon_url", "")).strip_edges()
+	if not icon_u.is_empty():
+		var tex: Texture2D = await GdlmImageLoader.fetch_texture_async(icon_u, self)
+		if is_instance_valid(_detail_icon) and is_instance_valid(self):
+			_detail_icon.texture = tex
+			_detail_icon.visible = tex != null
 	_detail_title.text = str(plugin.get("name", ""))
 	_detail_source.text = "%s/%s" % [str(plugin.get("owner", "")), str(plugin.get("repo", ""))]
 	_detail_desc.text = str(plugin.get("description", ""))

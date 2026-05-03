@@ -144,6 +144,28 @@ func check_repo_has_any_release(owner: String, repo: String) -> Dictionary:
 	return {"has_releases": arr.size() > 0, "uncertain": false}
 
 
+## GET /repos/{owner}/{repo} — returns { ok, topics: PackedStringArray } (repository "topics" field).
+func fetch_repository_topics(owner: String, repo: String) -> Dictionary:
+	var o := owner.strip_edges()
+	var r := repo.strip_edges()
+	if o.is_empty() or r.is_empty():
+		return {"ok": false, "topics": PackedStringArray()}
+	var url := "%s/repos/%s/%s" % [API_BASE, o.uri_encode(), r.uri_encode()]
+	var res: Dictionary = await _do_request(url, true)
+	if not res.ok:
+		return {"ok": false, "topics": PackedStringArray()}
+	var parsed: Variant = JSON.parse_string(res.text)
+	if parsed == null or not parsed is Dictionary:
+		return {"ok": false, "topics": PackedStringArray()}
+	var root: Dictionary = parsed
+	var tv: Variant = root.get("topics", [])
+	var out := PackedStringArray()
+	if tv is Array:
+		for x in tv:
+			out.append(str(x))
+	return {"ok": true, "topics": out}
+
+
 ## Latest release object or prerelease skipped? GitHub /releases/latest is latest non-draft stable.
 func fetch_latest(owner: String, repo: String) -> Dictionary:
 	var url := "%s/repos/%s/%s/releases/latest" % [API_BASE, owner.uri_encode(), repo.uri_encode()]
