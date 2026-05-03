@@ -58,6 +58,7 @@ var _paged_search_serial: int = 0
 @onready var _rate_label: Label = %RateLimitLabel
 @onready var _status_label: Label = %StatusLabel
 @onready var _refresh_btn: Button = %RefreshButton
+@onready var _browse_catalog_btn: Button = %BrowseCatalogButton
 @onready var _add_repo_btn: Button = %AddRepoButton
 @onready var _settings_btn: Button = %SettingsButton
 @onready var _remove_repo_btn: Button = %RemoveRepoButton
@@ -93,6 +94,7 @@ func setup(p_plugin: EditorPlugin) -> void:
 
 func _ready() -> void:
 	_refresh_btn.pressed.connect(_on_refresh_pressed)
+	_browse_catalog_btn.pressed.connect(_on_browse_catalog_pressed)
 	_add_repo_btn.pressed.connect(_on_add_repo_pressed)
 	_settings_btn.pressed.connect(_on_settings_pressed)
 	_remove_repo_btn.pressed.connect(_on_remove_repo_pressed)
@@ -820,6 +822,12 @@ func _installed_record() -> Dictionary:
 
 func _on_refresh_pressed() -> void:
 	await _refresh_plugin_list()
+
+
+func _on_browse_catalog_pressed() -> void:
+	## Same as Search with an empty keyword: full offline topic catalog, paginated.
+	_search_edit.text = ""
+	await _run_paged_search(true)
 
 
 func _refresh_plugin_list() -> void:

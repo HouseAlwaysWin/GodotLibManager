@@ -30,6 +30,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "My List"
 
+[node name="BrowseCatalogButton" type="Button" parent="RootVBox/Toolbar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Browse catalog"
+
 [node name="AddRepoButton" type="Button" parent="RootVBox/Toolbar"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -286,6 +291,14 @@ unique_name_in_owner = true
 layout_mode = 2
 disabled = true
 text = "Uninstall"
+
+[node name="DetailActionWarning" type="Label" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.68, 0.42, 1)
+theme_override_font_sizes/font_size = 11
+autowrap_mode = 3
+text = "Catalog and search hits may not be Godot editor plugins; verify the repository and release before installing."
 
 [node name="StatusBar" type="HBoxContainer" parent="RootVBox"]
 unique_name_in_owner = true
