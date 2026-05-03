@@ -132,6 +132,10 @@ func _status(msg: String) -> void:
 	_status_label.text = msg
 
 
+func _format_datetime_unix(unix_time: int, utc: bool) -> String:
+	return str(Time.get_datetime_string_from_unix_time(unix_time, utc)).replace("T", " ")
+
+
 func _update_rate_label() -> void:
 	var rem: int = _github.rate_limit_remaining
 	var lim: int = _github.rate_limit_limit
@@ -141,7 +145,7 @@ func _update_rate_label() -> void:
 		rem_s = "%s / %s" % [str(rem), str(lim)]
 	var reset_s := ""
 	if reset > 0:
-		reset_s = " (resets ~%s)" % Time.get_datetime_string_from_unix_time(reset, false)
+		reset_s = " (resets ~%s)" % _format_datetime_unix(reset, false)
 	_rate_label.text = "GitHub API rate limit remaining: %s%s" % [rem_s, reset_s]
 
 
@@ -237,7 +241,7 @@ func _github_items_to_plugin_entries(items: Array) -> Array:
 		var sort_u := int(PGithubClient.catalog_sort_unix_from_github_item(d))
 		var act := ""
 		if sort_u > 0:
-			act = "Last push: %s" % Time.get_datetime_string_from_unix_time(sort_u, true)
+			act = "Last push: %s" % _format_datetime_unix(sort_u, true)
 		out.append(
 			{
 				"name": fn,

@@ -43,7 +43,7 @@ func _apply() -> void:
 	if cap.is_empty():
 		var u := int(_plugin.get("_catalog_sort_unix", 0))
 		if u > 0:
-			var ts := Time.get_datetime_string_from_unix_time(u, true)
+			var ts := str(Time.get_datetime_string_from_unix_time(u, true)).replace("T", " ")
 			if _plugin.get("_from_github", false):
 				cap = "Last push: %s" % ts
 			else:
