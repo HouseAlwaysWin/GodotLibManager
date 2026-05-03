@@ -73,6 +73,10 @@ var _paged_search_serial: int = 0
 @onready var _search_next_btn: Button = %SearchNextPage
 @onready var _search_last_btn: Button = %SearchLastPage
 @onready var _search_meta_label: Label = %SearchPagerMetaLabel
+@onready var _filter_name_check: CheckBox = %FilterNameCheck
+@onready var _filter_owner_check: CheckBox = %FilterOwnerCheck
+@onready var _filter_desc_check: CheckBox = %FilterDescCheck
+@onready var _filter_fuzzy_name_check: CheckBox = %FilterFuzzyNameCheck
 @onready var _add_to_my_list_btn: Button = %AddToMyListButton
 @onready var _error_dialog: AcceptDialog = %ErrorDialog
 @onready var _success_dialog: AcceptDialog = %SuccessDialog
@@ -104,6 +108,10 @@ func _ready() -> void:
 	_search_prev_btn.pressed.connect(_on_search_prev_page_pressed)
 	_search_next_btn.pressed.connect(_on_search_next_page_pressed)
 	_search_last_btn.pressed.connect(_on_search_last_page_pressed)
+	_filter_name_check.toggled.connect(_on_search_filter_toggled)
+	_filter_owner_check.toggled.connect(_on_search_filter_toggled)
+	_filter_desc_check.toggled.connect(_on_search_filter_toggled)
+	_filter_fuzzy_name_check.toggled.connect(_on_search_filter_toggled)
 	_add_to_my_list_btn.pressed.connect(_on_add_to_my_list_pressed)
 	_open_repo_btn.pressed.connect(_on_open_repo_page_pressed)
 	_release_option.item_selected.connect(_on_release_selected)
@@ -280,6 +288,132 @@ func _sort_catalog_newest_first(items: Array) -> void:
 	)
 
 
+func _on_search_filter_toggled(_button_pressed: bool) -> void:
+	if not _catalog_ready or not _showing_search_results:
+		return
+	_search_ui_page = 1
+	await _run_paged_search(false)
+
+
+func _current_search_filter_flags() -> Dictionary:
+	if not is_instance_valid(_filter_name_check):
+		return {"name": true, "owner": true, "desc": true, "fuzzy_name": false}
+	var use_name := _filter_name_check.button_pressed
+	var use_owner := _filter_owner_check.button_pressed
+	var use_desc := _filter_desc_check.button_pressed
+	if not use_name and not use_owner and not use_desc:
+		use_name = true
+	return {
+		"name": use_name,
+		"owner": use_owner,
+		"desc": use_desc,
+		"fuzzy_name": _filter_fuzzy_name_check.button_pressed,
+	}
+
+
+static func _levenshtein_ascii(a: String, b: String) -> int:
+	var la := a.length()
+	var lb := b.length()
+	if la == 0:
+		return lb
+	if lb == 0:
+		return la
+	var row_prev: PackedInt32Array = PackedInt32Array()
+	row_prev.resize(lb + 1)
+	var row_cur: PackedInt32Array = PackedInt32Array()
+	row_cur.resize(lb + 1)
+	for j in range(lb + 1):
+		row_prev[j] = j
+	for i in range(la):
+		row_cur[0] = i + 1
+		var ac := a.unicode_at(i)
+		for j in range(lb):
+			var bc := b.unicode_at(j)
+			var cost := 0 if ac == bc else 1
+			row_cur[j + 1] = mini(
+				mini(row_cur[j] + 1, row_prev[j + 1] + 1),
+				row_prev[j] + cost
+			)
+		var swap := row_prev
+		row_prev = row_cur
+		row_cur = swap
+	return row_prev[lb]
+
+
+static func _normalize_repo_text_for_fuzzy(s: String) -> String:
+	var t := s.to_lower()
+	for sep in ["-", "_", "."]:
+		t = t.replace(sep, " ")
+	var parts := t.split(" ", false)
+	var ps := PackedStringArray()
+	for p in parts:
+		var pe := str(p).strip_edges()
+		if not pe.is_empty():
+			ps.append(pe)
+	return " ".join(ps)
+
+
+static func _fuzzy_token_matches_repo_name(tt: String, full_name_lower: String) -> bool:
+	var nt := _normalize_repo_text_for_fuzzy(full_name_lower)
+	var tn := _normalize_repo_text_for_fuzzy(tt)
+	if tn.is_empty():
+		return false
+	if nt.contains(tn):
+		return true
+	var max_dist := 1 if tn.length() <= 10 else 2
+	for chunk in nt.split(" ", false):
+		if chunk.is_empty():
+			continue
+		if abs(chunk.length() - tn.length()) > max_dist + 1:
+			continue
+		if _levenshtein_ascii(tn, chunk) <= max_dist:
+			return true
+	for chunk in nt.split("/", false):
+		var cc := _normalize_repo_text_for_fuzzy(chunk)
+		if cc.is_empty():
+			continue
+		if abs(cc.length() - tn.length()) > max_dist + 1:
+			continue
+		if _levenshtein_ascii(tn, cc) <= max_dist:
+			return true
+	if abs(nt.length() - tn.length()) <= max_dist + 2:
+		return _levenshtein_ascii(tn, nt) <= max_dist
+	return false
+
+
+func _token_matches_catalog_field(
+	tt: String,
+	field_text: String,
+	field_kind: StringName,
+	fuzzy_name: bool
+) -> bool:
+	var fl := field_text.to_lower()
+	if fl.is_empty():
+		return false
+	if fl.contains(tt):
+		return true
+	if field_kind == &"name" and fuzzy_name:
+		return _fuzzy_token_matches_repo_name(tt, fl)
+	return false
+
+
+func _token_matches_catalog_entry(tt: String, d: Dictionary, flt: Dictionary) -> bool:
+	var use_name: bool = flt.get("name", true)
+	var use_owner: bool = flt.get("owner", true)
+	var use_desc: bool = flt.get("desc", true)
+	var fuzzy_name: bool = flt.get("fuzzy_name", false) and use_name
+	var name_s := str(d.get("name", ""))
+	var owner_s := str(d.get("owner", ""))
+	var desc_s := str(d.get("description", ""))
+	if use_name and _token_matches_catalog_field(tt, name_s, &"name", fuzzy_name):
+		return true
+	if use_owner and _token_matches_catalog_field(tt, owner_s, &"owner", false):
+		return true
+	if use_desc and _token_matches_catalog_field(tt, desc_s, &"desc", false):
+		return true
+	return false
+
+
 func _filter_catalog_entries_local(all_entries: Array, q: String) -> Array:
 	var qn := q.strip_edges().to_lower()
 	if qn.is_empty():
@@ -291,31 +425,22 @@ func _filter_catalog_entries_local(all_entries: Array, q: String) -> Array:
 		_sort_catalog_newest_first(dup)
 		return dup
 	var tokens := qn.split(" ", false)
+	var flt := _current_search_filter_flags()
 	var out: Array = []
 	for e in all_entries:
 		if not e is Dictionary:
 			continue
 		var d: Dictionary = e
-		var hay := (
-			"%s %s %s %s"
-			% [
-				str(d.get("name", "")),
-				str(d.get("owner", "")),
-				str(d.get("repo", "")),
-				str(d.get("description", "")),
-			]
-		).to_lower()
 		var ok := true
 		for t in tokens:
 			var tt := str(t).strip_edges()
 			if tt.is_empty():
 				continue
-			if not hay.contains(tt):
+			if not _token_matches_catalog_entry(tt, d, flt):
 				ok = false
 				break
 		if ok:
 			out.append(d.duplicate(true))
-	## Same rule as empty search: newest first by stored push time.
 	_sort_catalog_newest_first(out)
 	return out
 
