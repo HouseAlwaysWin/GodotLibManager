@@ -17,6 +17,7 @@ var _installer: RefCounted
 var _plugins: Array = []
 var _releases: Array = []
 var _selected: Dictionary = {}
+var _showing_search_results: bool = false
 
 @onready var _plugin_list: VBoxContainer = %PluginList
 @onready var _detail_title: Label = %DetailTitle
@@ -35,9 +36,8 @@ var _selected: Dictionary = {}
 @onready var _remove_repo_btn: Button = %RemoveRepoButton
 @onready var _search_edit: LineEdit = %SearchLineEdit
 @onready var _search_btn: Button = %SearchButton
-@onready var _search_window: Window = %SearchWindow
-@onready var _search_status: Label = %SearchStatus
-@onready var _search_list: ItemList = %SearchResultList
+@onready var _search_banner: Label = %SearchBanner
+@onready var _add_to_my_list_btn: Button = %AddToMyListButton
 @onready var _error_dialog: AcceptDialog = %ErrorDialog
 @onready var _success_dialog: AcceptDialog = %SuccessDialog
 @onready var _install_confirm: ConfirmationDialog = %InstallConfirm
@@ -63,9 +63,7 @@ func _ready() -> void:
 	_remove_repo_btn.pressed.connect(_on_remove_repo_pressed)
 	_search_btn.pressed.connect(_on_github_search_pressed)
 	_search_edit.text_submitted.connect(_on_github_search_submitted)
-	%AddFromSearchButton.pressed.connect(_on_add_from_search_pressed)
-	%CloseSearchButton.pressed.connect(func(): _search_window.hide())
-	_search_list.item_activated.connect(_on_search_item_activated)
+	_add_to_my_list_btn.pressed.connect(_on_add_to_my_list_pressed)
 	_release_option.item_selected.connect(_on_release_selected)
 	_install_btn.pressed.connect(_on_install_pressed)
 	_update_btn.pressed.connect(_on_update_pressed)
@@ -124,21 +122,20 @@ func _on_github_search_submitted(_text: String) -> void:
 	_on_github_search_pressed()
 
 
-func _on_github_search_pressed() -> void:
-	var q := _search_edit.text.strip_edges()
-	if q.is_empty():
-		return
-	_status("Searching GitHub…")
-	var res: Dictionary = await _github.search_repositories(q)
-	_update_rate_label()
-	if not res.get("ok", false):
-		_show_error("GitHub search failed:\n%s" % str(res.get("error", "?")))
-		_status("Search failed.")
-		return
-	var items: Array = res.get("items", [])
-	var total: int = int(res.get("total", 0))
-	_search_list.clear()
-	var row := 0
+func _clear_detail_panel() -> void:
+	_selected.clear()
+	_releases.clear()
+	_detail_title.text = "Select a plugin"
+	_detail_source.text = ""
+	_detail_desc.text = ""
+	_release_option.clear()
+	_release_option.disabled = true
+	_release_notes.text = ""
+	_refresh_install_buttons()
+
+
+func _github_items_to_plugin_entries(items: Array) -> Array:
+	var out: Array = []
 	for it in items:
 		if not it is Dictionary:
 			continue
@@ -146,19 +143,88 @@ func _on_github_search_pressed() -> void:
 		var fn := str(d.get("full_name", ""))
 		if fn.is_empty():
 			continue
-		var desc := str(d.get("description", "")).replace("\n", " ")
-		if desc.length() > 120:
-			desc = desc.substr(0, 117) + "…"
-		_search_list.add_item("%s — %s" % [fn, desc])
-		_search_list.set_item_metadata(row, fn)
-		row += 1
-	_search_status.text = "Showing %s repositories (~%s total matches on GitHub)." % [
-		str(_search_list.item_count),
-		str(total),
-	]
-	_center_window(_search_window)
-	_search_window.show()
-	_status("Search done.")
+		var parts := fn.split("/", false)
+		if parts.size() < 2:
+			continue
+		out.append(
+			{
+				"name": fn,
+				"owner": str(parts[0]),
+				"repo": str(parts[1]),
+				"description": str(d.get("description", "")),
+				"addon_dir": "",
+				"_from_search": true,
+				"_from_github": true,
+			}
+		)
+	return out
+
+
+func _merge_search_results(al: Dictionary, gh: Dictionary) -> Array:
+	var seen: Dictionary = {}
+	var out: Array = []
+	if al.get("ok", false):
+		for p in al.get("plugins", []):
+			if not p is Dictionary:
+				continue
+			var d: Dictionary = p
+			var k := PRegistryLoader.canonical_owner_repo(
+				"%s/%s" % [str(d.get("owner", "")), str(d.get("repo", ""))]
+			)
+			if k.is_empty() or seen.has(k):
+				continue
+			seen[k] = true
+			out.append(d)
+	if gh.get("ok", false):
+		for p2 in _github_items_to_plugin_entries(gh.get("items", [])):
+			if not p2 is Dictionary:
+				continue
+			var d2: Dictionary = p2
+			var k2 := PRegistryLoader.canonical_owner_repo(
+				"%s/%s" % [str(d2.get("owner", "")), str(d2.get("repo", ""))]
+			)
+			if k2.is_empty() or seen.has(k2):
+				continue
+			seen[k2] = true
+			out.append(d2)
+	return out
+
+
+func _on_github_search_pressed() -> void:
+	var q := _search_edit.text.strip_edges()
+	if q.is_empty():
+		return
+	_clear_detail_panel()
+	_status("Searching Godot Asset Library and GitHub…")
+	var al_res: Dictionary = await _github.search_asset_library_plugins(q, 15)
+	var gh_res: Dictionary = await _github.search_repositories(q)
+	_update_rate_label()
+	if not al_res.get("ok", false) and not gh_res.get("ok", false):
+		var e1 := str(al_res.get("error", ""))
+		var e2 := str(gh_res.get("error", ""))
+		_show_error("Search failed.\nAsset Library: %s\nGitHub: %s" % [e1, e2])
+		_status("Search failed.")
+		return
+	_plugins = _merge_search_results(al_res, gh_res)
+	_showing_search_results = true
+	var al_total := 0
+	var al_n := 0
+	if al_res.get("ok", false):
+		al_total = int(al_res.get("total_matches", 0))
+		var ap: Variant = al_res.get("plugins", [])
+		al_n = ap.size() if ap is Array else 0
+	var gh_total: int = int(gh_res.get("total", 0)) if gh_res.get("ok", false) else 0
+	_search_banner.text = (
+		"Asset Library + GitHub — %s repo(s) (deduped). "
+		+ "Asset Library: %s in list (~%s matches). GitHub: ~%s matches. "
+		+ "Install still uses each repo’s GitHub releases. Press Refresh to return to your saved list."
+	) % [str(_plugins.size()), str(al_n), str(al_total), str(gh_total)]
+	_search_banner.visible = true
+	_rebuild_plugin_cards()
+	_status(
+		"Search: %s rows (Asset Library %s · GitHub ~%s)."
+		% [str(_plugins.size()), str(al_n), str(gh_total)]
+	)
 
 
 func _append_manual_repo_canonical(can: String) -> void:
@@ -178,27 +244,30 @@ func _append_manual_repo_canonical(can: String) -> void:
 	PSettings.save_config(_config)
 
 
-func _on_add_from_search_pressed() -> void:
-	var sel := _search_list.get_selected_items()
-	if sel.is_empty():
-		_show_error("Select a repository in the list.")
+func _is_selection_in_manual_list() -> bool:
+	if _selected.is_empty():
+		return false
+	var key := PRegistryLoader.canonical_owner_repo(
+		"%s/%s" % [str(_selected.get("owner", "")), str(_selected.get("repo", ""))]
+	)
+	if key.is_empty():
+		return false
+	for m in PSettings.get_manual_repos(_config):
+		if PRegistryLoader.canonical_owner_repo(str(m)) == key:
+			return true
+	return false
+
+
+func _on_add_to_my_list_pressed() -> void:
+	if not _selected.get("_from_search", false):
 		return
-	var fn: Variant = _search_list.get_item_metadata(sel[0])
-	_add_search_result_to_list(str(fn))
-
-
-func _on_search_item_activated(index: int) -> void:
-	var fn: Variant = _search_list.get_item_metadata(index)
-	_add_search_result_to_list(str(fn))
-
-
-func _add_search_result_to_list(full_name: String) -> void:
-	var can := PRegistryLoader.canonical_owner_repo(full_name)
+	var can := PRegistryLoader.canonical_owner_repo(
+		"%s/%s" % [str(_selected.get("owner", "")), str(_selected.get("repo", ""))]
+	)
 	if can.is_empty():
-		_show_error("Invalid repository name.")
 		return
 	_append_manual_repo_canonical(can)
-	_search_window.hide()
+	_show_success("%s added to your saved list." % can)
 	await _refresh_plugin_list()
 
 
@@ -213,7 +282,10 @@ func _rebuild_plugin_cards() -> void:
 		c.queue_free()
 	if _plugins.is_empty():
 		var hint := Label.new()
-		hint.text = "No plugins yet.\n• Search — find public repos on GitHub, then Add to my list.\n• Add repo… — paste owner/repo or a full github.com URL.\n• Token… — optional PAT for higher API rate limits."
+		if _showing_search_results:
+			hint.text = "No repositories matched. Try different keywords, or press Refresh."
+		else:
+			hint.text = "No plugins yet.\n• Use Search — results appear in this list.\n• Add repo… — paste owner/repo or a github.com URL.\n• Token… — optional PAT for higher API limits."
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		hint.add_theme_color_override("font_color", Color(0.62, 0.68, 0.78))
 		_plugin_list.add_child(hint)
@@ -227,10 +299,14 @@ func _rebuild_plugin_cards() -> void:
 		var owner_s := str(d.get("owner", ""))
 		var repo_s := str(d.get("repo", ""))
 		var installed := PSettings.get_installed_for_source(_config, owner_s, repo_s)
-		if installed.is_empty():
-			card.set_badge("")
-		else:
+		if not installed.is_empty():
 			card.set_badge("Installed: %s" % str(installed.get("version", "?")))
+		elif d.get("_from_asset_library", false):
+			card.set_badge("Asset Library")
+		elif d.get("_from_search", false):
+			card.set_badge("GitHub")
+		else:
+			card.set_badge("")
 		card.card_pressed.connect(_on_plugin_card_pressed)
 		_plugin_list.add_child(card)
 
@@ -270,6 +346,18 @@ func _on_plugin_card_pressed(plugin: Dictionary) -> void:
 	_refresh_install_buttons()
 
 
+func _refresh_install_buttons() -> void:
+	var ins := _installed_record()
+	var rel := _get_selected_release()
+	var has_rel := not rel.is_empty()
+	var search_hit := _selected.get("_from_search", false)
+	var already_saved := _is_selection_in_manual_list()
+	_add_to_my_list_btn.visible = search_hit and not already_saved
+	_install_btn.disabled = not has_rel or not ins.is_empty()
+	_update_btn.disabled = not has_rel or ins.is_empty()
+	_uninstall_btn.disabled = ins.is_empty()
+
+
 func _get_selected_release() -> Dictionary:
 	var i := _release_option.selected
 	if i < 0 or i >= _releases.size():
@@ -299,20 +387,14 @@ func _installed_record() -> Dictionary:
 	)
 
 
-func _refresh_install_buttons() -> void:
-	var ins := _installed_record()
-	var rel := _get_selected_release()
-	var has_rel := not rel.is_empty()
-	_install_btn.disabled = not has_rel or not ins.is_empty()
-	_update_btn.disabled = not has_rel or ins.is_empty()
-	_uninstall_btn.disabled = ins.is_empty()
-
-
 func _on_refresh_pressed() -> void:
 	await _refresh_plugin_list()
 
 
 func _refresh_plugin_list() -> void:
+	_showing_search_results = false
+	if _search_banner:
+		_search_banner.visible = false
 	_config = PSettings.load_config()
 	_github.set_token(PSettings.get_github_token(_config))
 	_status("Loading plugin list…")
@@ -328,6 +410,7 @@ func _refresh_plugin_list() -> void:
 	_update_rate_label()
 	_rebuild_plugin_cards()
 	_status("Loaded %s plugin(s)." % str(_plugins.size()))
+	_refresh_install_buttons()
 
 
 func _on_add_repo_pressed() -> void:

@@ -28,7 +28,7 @@ external_debug_attach/f5_attach_check_max=12
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/external_debug_attach/plugin.cfg", "res://addons/godot_lib_manager/plugin.cfg")
+enabled=PackedStringArray("res://addons/godot_lib_manager/plugin.cfg")
 
 [physics]
 
