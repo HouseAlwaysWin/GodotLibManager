@@ -714,7 +714,8 @@ func _run_paged_search(reset_page: bool) -> void:
 	var age_h := int((Time.get_unix_time_from_system() - _catalog_saved_unix) / 3600.0)
 	_search_banner.text = (
 		"Offline catalog — %s match(es), showing %s on this page (%s per page). "
-		+ "Catalog holds %s repos (GitHub topic search snapshot). "
+		+ "Catalog holds %s repos (GitHub topic search snapshot: godot-addon, godot-plugin, godot-engine, gdextension). "
+		+ "Only repositories that appear in those topic searches are included—add anything else with Add repo…. "
 		+ "Sorted by last push to default branch — see each row. "
 		+ "Not sorted by latest release (would need one API call per repo). "
 		+ "Keyword filter is local. Releases load when you select a repo. "
@@ -813,8 +814,12 @@ func _rebuild_plugin_cards() -> void:
 		var hint := Label.new()
 		if _showing_search_results:
 			hint.text = (
-				"No matches in the offline catalog for this keyword.\n"
-				+ "Try other words, clear the box to browse all, or open My List."
+				"No matches for this keyword in the offline catalog.\n\n"
+				+ "This catalog is a local snapshot built from GitHub topic searches "
+				+ "(godot-addon, godot-plugin, godot-engine, gdextension). "
+				+ "Repositories that do not show up in those searches—including yours if it lacks those topics—will not appear here. "
+				+ "Use Add repo… to paste owner/repo or a github.com URL and work with it from My List.\n\n"
+				+ "Try other words, clear the search box to browse the full snapshot, or open My List."
 			)
 		else:
 			hint.text = "No plugins yet.\n• Use Search — results appear in this list.\n• Add repo… — paste owner/repo or a github.com URL.\n• Token… — optional PAT for higher API limits."
