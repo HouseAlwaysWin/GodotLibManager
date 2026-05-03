@@ -59,6 +59,7 @@ var _paged_search_serial: int = 0
 @onready var _status_label: Label = %StatusLabel
 @onready var _refresh_btn: Button = %RefreshButton
 @onready var _browse_catalog_btn: Button = %BrowseCatalogButton
+@onready var _refresh_catalog_btn: Button = %RefreshCatalogButton
 @onready var _add_repo_btn: Button = %AddRepoButton
 @onready var _settings_btn: Button = %SettingsButton
 @onready var _remove_repo_btn: Button = %RemoveRepoButton
@@ -86,6 +87,7 @@ var _paged_search_serial: int = 0
 @onready var _settings_window: Window = %SettingsWindow
 @onready var _token_edit: LineEdit = %TokenEdit
 @onready var _remove_repo_confirm: ConfirmationDialog = %RemoveRepoConfirm
+@onready var _catalog_refresh_confirm: ConfirmationDialog = %CatalogRefreshConfirm
 
 
 func setup(p_plugin: EditorPlugin) -> void:
@@ -99,6 +101,8 @@ func setup(p_plugin: EditorPlugin) -> void:
 func _ready() -> void:
 	_refresh_btn.pressed.connect(_on_refresh_pressed)
 	_browse_catalog_btn.pressed.connect(_on_browse_catalog_pressed)
+	_refresh_catalog_btn.pressed.connect(_on_refresh_catalog_pressed)
+	_catalog_refresh_confirm.confirmed.connect(_on_catalog_refresh_confirmed)
 	_add_repo_btn.pressed.connect(_on_add_repo_pressed)
 	_settings_btn.pressed.connect(_on_settings_pressed)
 	_remove_repo_btn.pressed.connect(_on_remove_repo_pressed)
@@ -962,6 +966,33 @@ func _on_browse_catalog_pressed() -> void:
 	## Same as Search with an empty keyword: full offline topic catalog, paginated.
 	_search_edit.text = ""
 	await _run_paged_search(true)
+
+
+func _on_refresh_catalog_pressed() -> void:
+	if _catalog_refresh_running:
+		_show_error("Catalog refresh is already in progress.")
+		return
+	if not _catalog_ready:
+		_show_error("The catalog is still loading. Try again in a moment.")
+		return
+	_catalog_refresh_confirm.popup_centered()
+
+
+func _on_catalog_refresh_confirmed() -> void:
+	if _catalog_refresh_running or not _catalog_ready:
+		return
+	_catalog_refresh_running = true
+	if is_instance_valid(_refresh_catalog_btn):
+		_refresh_catalog_btn.disabled = true
+	_status("Refreshing search catalog…")
+	await _fetch_catalog_from_network()
+	_catalog_refresh_running = false
+	if is_instance_valid(_refresh_catalog_btn):
+		_refresh_catalog_btn.disabled = false
+	_status("Catalog refreshed: %s entries." % str(_catalog_entries.size()))
+	if _showing_search_results:
+		await _run_paged_search(true)
+	_update_rate_label()
 
 
 func _refresh_plugin_list() -> void:

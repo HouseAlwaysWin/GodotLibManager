@@ -35,6 +35,11 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "Browse catalog"
 
+[node name="RefreshCatalogButton" type="Button" parent="RootVBox/Toolbar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Refresh catalog"
+
 [node name="AddRepoButton" type="Button" parent="RootVBox/Toolbar"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -341,10 +346,10 @@ theme_override_font_sizes/font_size = 11
 autowrap_mode = 3
 text = "Catalog and search hits may not be Godot editor plugins; verify the repository and release before installing."
 
-[node name="StatusBar" type="HBoxContainer" parent="RootVBox"]
+[node name="StatusBar" type="VBoxContainer" parent="RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 16
+theme_override_constants/separation = 4
 
 [node name="RateLimitLabel" type="Label" parent="RootVBox/StatusBar"]
 unique_name_in_owner = true
@@ -352,6 +357,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.55, 0.62, 0.75, 1)
 theme_override_font_sizes/font_size = 11
+autowrap_mode = 3
 text = "Rate limit: —"
 
 [node name="StatusLabel" type="Label" parent="RootVBox/StatusBar"]
@@ -360,6 +366,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.62, 0.68, 0.78, 1)
 theme_override_font_sizes/font_size = 11
+autowrap_mode = 3
 text = ""
 
 [node name="ErrorDialog" type="AcceptDialog" parent="."]
@@ -405,6 +412,13 @@ unique_name_in_owner = true
 title = "Remove from list"
 ok_button_text = "Remove"
 dialog_text = "Remove this repository from your list?"
+
+[node name="CatalogRefreshConfirm" type="ConfirmationDialog" parent="."]
+unique_name_in_owner = true
+title = "Refresh offline catalog"
+ok_button_text = "Refresh"
+size = Vector2i(520, 220)
+dialog_text = "This re-downloads the GitHub topic catalog (many API requests). It can take a noticeable amount of time and will consume GitHub API quota. The editor may stay busy until it finishes. Continue?"
 
 [node name="SettingsWindow" type="Window" parent="."]
 unique_name_in_owner = true
