@@ -28,24 +28,57 @@ static func _try_one_loader(data: PackedByteArray, which: int) -> Image:
 	return null
 
 
+static func _skip_ws_and_utf8_bom(data: PackedByteArray) -> int:
+	var i := 0
+	if data.size() >= 3 and data[0] == 0xEF and data[1] == 0xBB and data[2] == 0xBF:
+		i = 3
+	while i < data.size():
+		var b: int = data[i]
+		if b == 9 or b == 10 or b == 13 or b == 32:
+			i += 1
+		else:
+			break
+	return i
+
+
+## Detect CDN HTML error bodies without calling get_string_from_utf8 on binary (avoids Unicode ERROR spam).
+static func _is_ascii_html_error_document(data: PackedByteArray) -> bool:
+	var i := _skip_ws_and_utf8_bom(data)
+	if i >= data.size() or data[i] != 0x3C:
+		return false
+	i += 1
+	var tag := PackedByteArray()
+	while i < data.size() and data[i] != 0x3E and tag.size() < 256:
+		var b: int = data[i]
+		if b > 0x7F:
+			return false
+		tag.append(b)
+		i += 1
+	var tag_s := tag.get_string_from_ascii().strip_edges().to_lower()
+	if tag_s.is_empty():
+		return false
+	if tag_s.begins_with("?xml") or tag_s.begins_with("svg"):
+		return false
+	if (
+		tag_s.begins_with("!doctype html")
+		or tag_s == "html"
+		or tag_s.begins_with("html ")
+		or tag_s.begins_with("head")
+		or tag_s.begins_with("title")
+		or tag_s.begins_with("body")
+	):
+		return true
+	return false
+
+
 static func decode_image(data: PackedByteArray) -> Image:
 	if data.is_empty():
 		return null
-	## Some CDNs return HTML on error — don’t run binary decoders.
-	if data.size() >= 2:
-		var probe := data.slice(0, mini(256, data.size()))
-		var head := probe.get_string_from_utf8().strip_edges()
-		var hl := head.to_lower()
-		var looks_svg := hl.begins_with("<svg") or (hl.begins_with("<?xml") and "<svg" in hl)
-		if head.begins_with("<") and not looks_svg:
-			return null
-	## PNG
+	## 1) Known binary images first — never pass PNG/JPEG/WebP/BMP bytes through UTF-8 text paths.
 	if data.size() >= 8 and data[0] == 0x89 and data[1] == 0x50 and data[2] == 0x4E and data[3] == 0x47:
 		return _try_one_loader(data, 1)
-	## JPEG
 	if data.size() >= 3 and data[0] == 0xFF and data[1] == 0xD8 and data[2] == 0xFF:
 		return _try_one_loader(data, 2)
-	## WebP (RIFF....WEBP)
 	if (
 		data.size() >= 12
 		and data[0] == 0x52
@@ -58,10 +91,12 @@ static func decode_image(data: PackedByteArray) -> Image:
 		and data[11] == 0x50
 	):
 		return _try_one_loader(data, 3)
-	## BMP
 	if data.size() >= 2 and data[0] == 0x42 and data[1] == 0x4D:
 		return _try_one_loader(data, 4)
-	## No PNG magic: do not call load_png_from_buffer (it still logs ERR_FILE_CORRUPT on random bytes).
+	## 2) Plain ASCII HTML error pages (no UTF-8 decode of binary).
+	if _is_ascii_html_error_document(data):
+		return null
+	## 3) Unknown — try image loaders; do not call get_string_from_utf8 on raw bytes.
 	for which in [2, 3, 4, 5, 6]:
 		var got := _try_one_loader(data, which)
 		if got != null:
