@@ -64,7 +64,118 @@ func _addon_root_from_relative(rel: String) -> String:
 	return "addons/%s" % seg
 
 
-## Extract only paths under addons/ to res://. Returns list of unique addon roots like "addons/foo".
+func _slug_for_addon_folder(display_name: String) -> String:
+	var s := display_name.strip_edges().to_lower()
+	s = s.replace(" ", "_")
+	for ch in ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]:
+		s = s.replace(ch, "_")
+	while s.contains("__"):
+		s = s.replace("__", "_")
+	return s if not s.is_empty() else "addon"
+
+
+func _plugin_name_from_cfg_text(txt: String) -> String:
+	var in_section := false
+	for raw in txt.split("\n"):
+		var line := raw.strip_edges()
+		if line.begins_with(";") or line.is_empty():
+			continue
+		if line == "[plugin]":
+			in_section = true
+			continue
+		if line.begins_with("["):
+			in_section = false
+			continue
+		if not in_section:
+			continue
+		if line.begins_with("name"):
+			var eq := line.find("=")
+			if eq < 0:
+				continue
+			var val := line.substr(eq + 1).strip_edges()
+			val = val.trim_prefix('"').trim_suffix('"').trim_prefix("'").trim_suffix("'")
+			return val.strip_edges()
+	return ""
+
+
+## When zip has no addons/ paths, find plugin.cfg and install that folder under res://addons/<slug>/.
+func _install_plugin_cfg_fallback(zip_path: String) -> Dictionary:
+	var reader := ZIPReader.new()
+	if reader.open(zip_path) != OK:
+		return {"ok": false, "addon_dirs": [], "error": "zip_open_failed"}
+	var files: PackedStringArray = reader.get_files()
+	var cfg_paths: Array = []
+	for entry in files:
+		var p := str(entry).replace("\\", "/")
+		if p.ends_with("/"):
+			continue
+		if p.get_file().to_lower() != "plugin.cfg":
+			continue
+		cfg_paths.append(p)
+	if cfg_paths.is_empty():
+		reader.close()
+		return {"ok": false, "addon_dirs": [], "error": "zip_contains_no_addons_folder"}
+	var installed: Dictionary = {}
+	var used_slugs := {}
+	for cfg_path in cfg_paths:
+		var cfg_inner: String = str(cfg_path).replace("\\", "/")
+		var root_in_zip := cfg_inner.get_base_dir()
+		var prefix := ""
+		if not root_in_zip.is_empty():
+			prefix = root_in_zip + "/"
+		var txt := reader.read_file(cfg_inner).get_string_from_utf8()
+		var pname := _plugin_name_from_cfg_text(txt)
+		if pname.is_empty():
+			pname = root_in_zip.get_file() if not root_in_zip.is_empty() else "plugin"
+		var slug := _slug_for_addon_folder(pname)
+		var base_slug := slug
+		var n := 2
+		while used_slugs.has(slug):
+			slug = "%s_%s" % [base_slug, str(n)]
+			n += 1
+		used_slugs[slug] = true
+		var dest_root := "addons/%s" % slug
+		var single_cfg_zip := cfg_paths.size() == 1
+		for entry2 in files:
+			var inner := str(entry2).replace("\\", "/")
+			if inner.ends_with("/"):
+				continue
+			var include := false
+			var tail := ""
+			if prefix.is_empty():
+				# e.g. GitHub zipball: one top folder; or a lone plugin.cfg with subfolders
+				if single_cfg_zip:
+					include = true
+					tail = inner
+				elif not inner.contains("/"):
+					include = true
+					tail = inner
+			elif inner.begins_with(prefix):
+				include = true
+				tail = inner.substr(prefix.length())
+			if not include:
+				continue
+			var dest_rel := "%s/%s" % [dest_root, tail]
+			dest_rel = dest_rel.replace("//", "/")
+			var dest_res := "res://%s" % dest_rel
+			var parent_abs := ProjectSettings.globalize_path(dest_res.get_base_dir())
+			DirAccess.make_dir_recursive_absolute(parent_abs)
+			var buf: PackedByteArray = reader.read_file(inner)
+			var f := FileAccess.open(dest_res, FileAccess.WRITE)
+			if f == null:
+				reader.close()
+				return {"ok": false, "addon_dirs": installed.keys(), "error": "write_failed: %s" % dest_res}
+			f.store_buffer(buf)
+			f.close()
+		installed[dest_root] = true
+	reader.close()
+	var addon_list: Array = installed.keys()
+	addon_list.sort()
+	_editor_interface().get_resource_filesystem().scan()
+	return {"ok": true, "addon_dirs": addon_list, "error": ""}
+
+
+## Extract paths under addons/, else detect plugin.cfg trees (GitHub zipball layout).
 func install_from_zip(zip_path: String) -> Dictionary:
 	var reader := ZIPReader.new()
 	if reader.open(zip_path) != OK:
@@ -99,6 +210,8 @@ func install_from_zip(zip_path: String) -> Dictionary:
 	var addon_list: Array = roots.keys()
 	addon_list.sort()
 	_editor_interface().get_resource_filesystem().scan()
+	if addon_list.is_empty():
+		return _install_plugin_cfg_fallback(zip_path)
 	return {"ok": true, "addon_dirs": addon_list, "error": ""}
 
 
@@ -240,7 +353,10 @@ func install_release(
 	var tag := str(release.get("tag_name", release.get("name", "unknown")))
 	var url := pick_zip_asset_url(release, addon_hint)
 	if url.is_empty():
-		return {"ok": false, "addon_dirs": [], "error": "no_zip_asset"}
+		# Many authors ship only tag/source without a .zip attachment — use GitHub source archive.
+		url = str(release.get("zipball_url", "")).strip_edges()
+	if url.is_empty():
+		return {"ok": false, "addon_dirs": [], "error": "no_download_url"}
 	ensure_cache_dir()
 	var zip_path := _cache_zip_path(owner, repo, tag)
 	var dl: Dictionary = await github.download_asset(url, zip_path)

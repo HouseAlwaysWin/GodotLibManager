@@ -49,6 +49,22 @@ text = "Token…"
 layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="SearchRow" type="HBoxContainer" parent="RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SearchLineEdit" type="LineEdit" parent="RootVBox/SearchRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Search GitHub (e.g. godot dialog addon)"
+
+[node name="SearchButton" type="Button" parent="RootVBox/SearchRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Search"
+
 [node name="BodySplit" type="HSplitContainer" parent="RootVBox"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -177,6 +193,56 @@ size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.62, 0.68, 0.78, 1)
 theme_override_font_sizes/font_size = 11
 text = ""
+
+[node name="SearchWindow" type="Window" parent="."]
+unique_name_in_owner = true
+title = "GitHub search results"
+initial_position = 2
+size = Vector2i(640, 420)
+visible = false
+
+[node name="SearchMargin" type="MarginContainer" parent="SearchWindow"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="SearchVBox" type="VBoxContainer" parent="SearchWindow/SearchMargin"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="SearchStatus" type="Label" parent="SearchWindow/SearchMargin/SearchVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 3
+text = ""
+
+[node name="SearchResultList" type="ItemList" parent="SearchWindow/SearchMargin/SearchVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 240)
+
+[node name="SearchWinButtons" type="HBoxContainer" parent="SearchWindow/SearchMargin/SearchVBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="AddFromSearchButton" type="Button" parent="SearchWindow/SearchMargin/SearchVBox/SearchWinButtons"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Add selected to my list"
+
+[node name="CloseSearchButton" type="Button" parent="SearchWindow/SearchMargin/SearchVBox/SearchWinButtons"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Close"
 
 [node name="ErrorDialog" type="AcceptDialog" parent="."]
 unique_name_in_owner = true

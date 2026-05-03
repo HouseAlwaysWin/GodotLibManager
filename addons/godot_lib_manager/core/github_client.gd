@@ -127,3 +127,29 @@ func fetch_text(url: String) -> Dictionary:
 	if not res.ok:
 		return {"ok": false, "text": "", "error": res.get("text", res.error), "code": res.code}
 	return {"ok": true, "text": res.text, "error": "", "code": res.code}
+
+
+## GitHub Search API — returns { ok, items: Array[Dictionary], total, error }.
+func search_repositories(query: String, page: int = 1) -> Dictionary:
+	var q := query.strip_edges()
+	if q.is_empty():
+		return {"ok": false, "items": [], "total": 0, "error": "empty_query"}
+	var pg := mini(maxi(page, 1), 10)
+	var url := "%s/search/repositories?q=%s&sort=stars&per_page=15&page=%s" % [
+		API_BASE,
+		q.uri_encode(),
+		str(pg),
+	]
+	var res: Dictionary = await _do_request(url, true)
+	if not res.ok:
+		return {"ok": false, "items": [], "total": 0, "error": res.get("text", res.error)}
+	var parsed: Variant = JSON.parse_string(res.text)
+	if parsed == null or not parsed is Dictionary:
+		return {"ok": false, "items": [], "total": 0, "error": "invalid_json"}
+	var root: Dictionary = parsed
+	var items: Variant = root.get("items", [])
+	var arr: Array = []
+	if items is Array:
+		arr = items
+	var total: int = int(root.get("total_count", 0))
+	return {"ok": true, "items": arr, "total": total, "error": ""}

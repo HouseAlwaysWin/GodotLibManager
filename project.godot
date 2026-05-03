@@ -17,10 +17,18 @@ config/icon="res://icon.svg"
 [dotnet]
 
 project/assembly_name="GodotLibManager"
+external_debug_attach/ide_type=0
+external_debug_attach/vscode_path=""
+external_debug_attach/cursor_path=""
+external_debug_attach/antigravity_path=""
+external_debug_attach/show_service_console=false
+external_debug_attach/auto_register_debugwait_autoload=true
+external_debug_attach/debug_wait_seconds=12.0
+external_debug_attach/f5_attach_check_max=12
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/godot_lib_manager/plugin.cfg")
+enabled=PackedStringArray("res://addons/external_debug_attach/plugin.cfg", "res://addons/godot_lib_manager/plugin.cfg")
 
 [physics]
 

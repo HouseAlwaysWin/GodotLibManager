@@ -33,6 +33,11 @@ var _selected: Dictionary = {}
 @onready var _add_repo_btn: Button = %AddRepoButton
 @onready var _settings_btn: Button = %SettingsButton
 @onready var _remove_repo_btn: Button = %RemoveRepoButton
+@onready var _search_edit: LineEdit = %SearchLineEdit
+@onready var _search_btn: Button = %SearchButton
+@onready var _search_window: Window = %SearchWindow
+@onready var _search_status: Label = %SearchStatus
+@onready var _search_list: ItemList = %SearchResultList
 @onready var _error_dialog: AcceptDialog = %ErrorDialog
 @onready var _success_dialog: AcceptDialog = %SuccessDialog
 @onready var _install_confirm: ConfirmationDialog = %InstallConfirm
@@ -56,6 +61,11 @@ func _ready() -> void:
 	_add_repo_btn.pressed.connect(_on_add_repo_pressed)
 	_settings_btn.pressed.connect(_on_settings_pressed)
 	_remove_repo_btn.pressed.connect(_on_remove_repo_pressed)
+	_search_btn.pressed.connect(_on_github_search_pressed)
+	_search_edit.text_submitted.connect(_on_github_search_submitted)
+	%AddFromSearchButton.pressed.connect(_on_add_from_search_pressed)
+	%CloseSearchButton.pressed.connect(func(): _search_window.hide())
+	_search_list.item_activated.connect(_on_search_item_activated)
 	_release_option.item_selected.connect(_on_release_selected)
 	_install_btn.pressed.connect(_on_install_pressed)
 	_update_btn.pressed.connect(_on_update_pressed)
@@ -94,6 +104,104 @@ func _show_success(msg: String) -> void:
 	_success_dialog.popup_centered()
 
 
+func _format_install_error(code: String) -> String:
+	match code:
+		"zip_contains_no_addons_folder":
+			return (
+				"The downloaded archive has no addons/ folder at its root (after un-zipping GitHub’s wrapper folder).\n\n"
+				+ "Structure must contain paths like addons/my_plugin/…. Either publish a zip that includes addons/, "
+				+ "or put your addon under addons/ in the repository tag."
+			)
+		"no_download_url":
+			return "This release has no downloadable zip attachment and no GitHub source zip URL."
+		"no_zip_asset":
+			return "No .zip release asset was found; tried fallback to GitHub source archive."
+		_:
+			return "Install failed:\n%s" % code
+
+
+func _on_github_search_submitted(_text: String) -> void:
+	_on_github_search_pressed()
+
+
+func _on_github_search_pressed() -> void:
+	var q := _search_edit.text.strip_edges()
+	if q.is_empty():
+		return
+	_status("Searching GitHub…")
+	var res: Dictionary = await _github.search_repositories(q)
+	_update_rate_label()
+	if not res.get("ok", false):
+		_show_error("GitHub search failed:\n%s" % str(res.get("error", "?")))
+		_status("Search failed.")
+		return
+	var items: Array = res.get("items", [])
+	var total: int = int(res.get("total", 0))
+	_search_list.clear()
+	var row := 0
+	for it in items:
+		if not it is Dictionary:
+			continue
+		var d: Dictionary = it
+		var fn := str(d.get("full_name", ""))
+		if fn.is_empty():
+			continue
+		var desc := str(d.get("description", "")).replace("\n", " ")
+		if desc.length() > 120:
+			desc = desc.substr(0, 117) + "…"
+		_search_list.add_item("%s — %s" % [fn, desc])
+		_search_list.set_item_metadata(row, fn)
+		row += 1
+	_search_status.text = "Showing %s repositories (~%s total matches on GitHub)." % [
+		str(_search_list.item_count),
+		str(total),
+	]
+	_center_window(_search_window)
+	_search_window.show()
+	_status("Search done.")
+
+
+func _append_manual_repo_canonical(can: String) -> void:
+	if can.is_empty():
+		return
+	var manual := PSettings.get_manual_repos(_config)
+	for i in manual.size():
+		if PRegistryLoader.canonical_owner_repo(str(manual[i])) == can:
+			_show_error("%s is already in your list." % can)
+			return
+	var arr: Array = Array(manual)
+	arr.append(can)
+	var ps := PackedStringArray()
+	for x in arr:
+		ps.append(str(x))
+	PSettings.set_manual_repos(_config, ps)
+	PSettings.save_config(_config)
+
+
+func _on_add_from_search_pressed() -> void:
+	var sel := _search_list.get_selected_items()
+	if sel.is_empty():
+		_show_error("Select a repository in the list.")
+		return
+	var fn: Variant = _search_list.get_item_metadata(sel[0])
+	_add_search_result_to_list(str(fn))
+
+
+func _on_search_item_activated(index: int) -> void:
+	var fn: Variant = _search_list.get_item_metadata(index)
+	_add_search_result_to_list(str(fn))
+
+
+func _add_search_result_to_list(full_name: String) -> void:
+	var can := PRegistryLoader.canonical_owner_repo(full_name)
+	if can.is_empty():
+		_show_error("Invalid repository name.")
+		return
+	_append_manual_repo_canonical(can)
+	_search_window.hide()
+	await _refresh_plugin_list()
+
+
 func _sort_releases_by_date(arr: Array) -> void:
 	arr.sort_custom(
 		func(a, b): return str(a.get("published_at", "")) > str(b.get("published_at", ""))
@@ -105,7 +213,7 @@ func _rebuild_plugin_cards() -> void:
 		c.queue_free()
 	if _plugins.is_empty():
 		var hint := Label.new()
-		hint.text = "No plugins yet.\n• Add repo… — paste owner/repo or a github.com URL.\n• Token… — optional GitHub PAT for higher API limits.\n• Remove repo… — remove a repo you added (select it on the left first)."
+		hint.text = "No plugins yet.\n• Search — find public repos on GitHub, then Add to my list.\n• Add repo… — paste owner/repo or a full github.com URL.\n• Token… — optional PAT for higher API rate limits."
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		hint.add_theme_color_override("font_color", Color(0.62, 0.68, 0.78))
 		_plugin_list.add_child(hint)
@@ -296,7 +404,7 @@ func _on_install_confirmed() -> void:
 	)
 	_update_rate_label()
 	if not result.get("ok", false):
-		_show_error("Install failed:\n%s" % str(result.get("error", "unknown")))
+		_show_error(_format_install_error(str(result.get("error", "unknown"))))
 		_status("Install failed.")
 		return
 	var dirs: Array = result.get("addon_dirs", [])

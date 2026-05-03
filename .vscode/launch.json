@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": ".NET Attach (Godot)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": 18672,
+      "justMyCode": true
+    }
+  ]
+}
