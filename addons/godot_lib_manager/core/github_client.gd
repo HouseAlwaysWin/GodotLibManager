@@ -4,9 +4,45 @@ class_name GdlmGithubClient
 const API_BASE := "https://api.github.com"
 const ASSET_LIB_API := "https://godotengine.org/asset-library/api"
 
+
+## Unix time for catalog sort (newest first). GitHub: pushed_at; Asset Lib: modify_date.
+static func catalog_sort_unix_from_github_item(item: Dictionary) -> int:
+	var s := str(item.get("pushed_at", item.get("updated_at", ""))).strip_edges()
+	return catalog_sort_unix_from_date_string(s)
+
+
+static func catalog_sort_unix_from_asset_detail(det: Dictionary) -> int:
+	var s := str(det.get("modify_date", "")).strip_edges()
+	return catalog_sort_unix_from_date_string(s)
+
+
+static func activity_caption_for_asset_detail(det: Dictionary) -> String:
+	var u := catalog_sort_unix_from_asset_detail(det)
+	if u <= 0:
+		return ""
+	return "Asset Lib updated: %s" % Time.get_datetime_string_from_unix_time(u, true)
+
+
+static func catalog_sort_unix_from_date_string(s: String) -> int:
+	s = s.strip_edges()
+	if s.is_empty():
+		return 0
+	var u := Time.get_unix_time_from_datetime_string(s)
+	if u >= 0:
+		return u
+	if (" " in s) and (not s.contains("T")):
+		var alt := s.substr(0, 10) + "T" + s.substr(11).strip_edges() + "Z"
+		u = Time.get_unix_time_from_datetime_string(alt)
+		if u >= 0:
+			return u
+	return 0
+
+
 ## Last parsed rate limit (updated after each request).
 var rate_limit_remaining: int = -1
 var rate_limit_reset_unix: int = -1
+## REST core quota ceiling from GET /rate_limit (optional display).
+var rate_limit_limit: int = -1
 
 var _parent: Node
 var _token: String = ""
@@ -199,6 +235,29 @@ func fetch_text(url: String) -> Dictionary:
 	return {"ok": true, "text": res.text, "error": "", "code": res.code}
 
 
+## GET /rate_limit — cheap; updates rate_limit_* so the status bar can show quota without a prior API call.
+func refresh_rate_limit_from_api() -> void:
+	var url := "%s/rate_limit" % API_BASE
+	var res: Dictionary = await _do_request(url, true)
+	if not res.ok:
+		return
+	var parsed: Variant = JSON.parse_string(res.text)
+	if parsed == null or not parsed is Dictionary:
+		return
+	var resources: Variant = parsed.get("resources", {})
+	if not resources is Dictionary:
+		return
+	var core: Variant = resources.get("core", {})
+	if not core is Dictionary:
+		return
+	var c: Dictionary = core
+	rate_limit_limit = int(c.get("limit", -1))
+	rate_limit_remaining = int(c.get("remaining", -1))
+	var rs := int(c.get("reset", 0))
+	if rs > 0:
+		rate_limit_reset_unix = rs
+
+
 ## GitHub Search API — returns { ok, items: Array[Dictionary], total, error }.
 ## GitHub allows at most ~1000 hits per query; `per_page` max 100.
 func search_repositories(query: String, page: int = 1, per_page: int = 30) -> Dictionary:
@@ -292,7 +351,10 @@ func search_asset_library_plugins(
 				"addon_dir": "",
 				"repo_html_url": browse,
 				"icon_url": icon_u,
+				"asset_library_id": rid,
 				"asset_library_url": al_page,
+				"_catalog_sort_unix": catalog_sort_unix_from_asset_detail(det),
+				"_activity_caption": activity_caption_for_asset_detail(det),
 				"_from_search": true,
 				"_from_asset_library": true,
 			}

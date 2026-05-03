@@ -9,6 +9,7 @@ var _plugin: Dictionary = {}
 @onready var _title: Label = %Title
 @onready var _desc: Label = %Description
 @onready var _source: Label = %Source
+@onready var _activity: Label = %Activity
 @onready var _badge: Label = %Badge
 
 
@@ -38,6 +39,20 @@ func _apply() -> void:
 	_title.text = str(_plugin.get("name", ""))
 	_desc.text = str(_plugin.get("description", ""))
 	_source.text = "%s/%s" % [str(_plugin.get("owner", "")), str(_plugin.get("repo", ""))]
+	var cap := str(_plugin.get("_activity_caption", "")).strip_edges()
+	if cap.is_empty():
+		var u := int(_plugin.get("_catalog_sort_unix", 0))
+		if u > 0:
+			var ts := Time.get_datetime_string_from_unix_time(u, true)
+			if _plugin.get("_from_asset_library", false):
+				cap = "Asset Lib updated: %s" % ts
+			elif _plugin.get("_from_github", false):
+				cap = "Last push: %s" % ts
+			else:
+				cap = "Updated: %s" % ts
+	if is_instance_valid(_activity):
+		_activity.text = cap
+		_activity.visible = not cap.is_empty()
 	_badge.text = str(_plugin.get("_badge", ""))
 	if is_instance_valid(_icon):
 		_icon.texture = null
