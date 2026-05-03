@@ -58,19 +58,12 @@ theme_override_constants/separation = 8
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-placeholder_text = "Search Asset Library + GitHub (install uses GitHub releases)"
+placeholder_text = "Search offline GitHub topic catalog (local filter)"
 
 [node name="SearchButton" type="Button" parent="RootVBox/SearchRow"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Search"
-
-[node name="CatalogSourceOption" type="OptionButton" parent="RootVBox/SearchRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(148, 0)
-layout_mode = 2
-tooltip_text = "Limit the offline catalog list to GitHub snapshot rows or Asset Library rows (after Search)."
-disabled = true
 
 [node name="SearchPagerWrap" type="VBoxContainer" parent="RootVBox"]
 unique_name_in_owner = true
@@ -228,13 +221,6 @@ unique_name_in_owner = true
 layout_mode = 2
 disabled = true
 text = "Open repository page"
-
-[node name="OpenAssetLibButton" type="Button" parent="RootVBox/BodySplit/RightPanel/RightVBox/DetailLinks"]
-unique_name_in_owner = true
-layout_mode = 2
-visible = false
-tooltip_text = "Switch to the editor AssetLib workspace (built-in catalog)."
-text = "View on Asset Library"
 
 [node name="DetailDesc" type="TextEdit" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
 unique_name_in_owner = true

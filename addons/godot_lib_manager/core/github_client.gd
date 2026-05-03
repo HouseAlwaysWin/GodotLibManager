@@ -2,25 +2,11 @@ extends RefCounted
 class_name GdlmGithubClient
 
 const API_BASE := "https://api.github.com"
-const ASSET_LIB_API := "https://godotengine.org/asset-library/api"
 
-
-## Unix time for catalog sort (newest first). GitHub: pushed_at; Asset Lib: modify_date.
+## Unix time for catalog sort (newest first). GitHub: pushed_at / updated_at.
 static func catalog_sort_unix_from_github_item(item: Dictionary) -> int:
 	var s := str(item.get("pushed_at", item.get("updated_at", ""))).strip_edges()
 	return catalog_sort_unix_from_date_string(s)
-
-
-static func catalog_sort_unix_from_asset_detail(det: Dictionary) -> int:
-	var s := str(det.get("modify_date", "")).strip_edges()
-	return catalog_sort_unix_from_date_string(s)
-
-
-static func activity_caption_for_asset_detail(det: Dictionary) -> String:
-	var u := catalog_sort_unix_from_asset_detail(det)
-	if u <= 0:
-		return ""
-	return "Asset Lib updated: %s" % Time.get_datetime_string_from_unix_time(u, true)
 
 
 static func catalog_sort_unix_from_date_string(s: String) -> int:
@@ -109,35 +95,6 @@ func _do_request(url: String, for_api: bool) -> Dictionary:
 		"ok": response_code >= 200 and response_code < 300,
 		"code": response_code,
 		"body": response_body,
-		"text": text,
-		"error": "" if response_code >= 200 and response_code < 300 else "http_%s" % str(response_code),
-	}
-
-
-## Generic GET for non-GitHub JSON APIs (no GitHub auth / rate-limit headers).
-func _do_request_json(url: String) -> Dictionary:
-	var http := HTTPRequest.new()
-	_parent.add_child(http)
-	var h := PackedStringArray()
-	h.append("Accept: application/json")
-	h.append("User-Agent: GodotLibManager/0.1 (Godot Editor)")
-	var err: Error = http.request(url, h, HTTPClient.METHOD_GET)
-	if err != OK:
-		http.queue_free()
-		return {
-			"ok": false,
-			"code": 0,
-			"text": "",
-			"error": "request_failed: %s" % str(err),
-		}
-	var result: Array = await http.request_completed
-	http.queue_free()
-	var response_code: int = result[1]
-	var response_body: PackedByteArray = result[3]
-	var text := response_body.get_string_from_utf8()
-	return {
-		"ok": response_code >= 200 and response_code < 300,
-		"code": response_code,
 		"text": text,
 		"error": "" if response_code >= 200 and response_code < 300 else "http_%s" % str(response_code),
 	}
@@ -286,77 +243,3 @@ func search_repositories(query: String, page: int = 1, per_page: int = 30) -> Di
 		arr = items
 	var total: int = int(root.get("total_count", 0))
 	return {"ok": true, "items": arr, "total": total, "error": ""}
-
-
-## Official Godot Asset Library — resolves browse_url to GitHub owner/repo; install still uses GitHub releases.
-## Returns { ok, plugins: Array[Dictionary], total_matches, error } — same plugin shape as registry entries + _from_search, _from_asset_library.
-func search_asset_library_plugins(
-	query: String, max_results: int = 30, page: int = 0
-) -> Dictionary:
-	var q := query.strip_edges()
-	if q.is_empty():
-		return {"ok": false, "plugins": [], "total_matches": 0, "error": "empty_query"}
-	var cap := mini(maxi(max_results, 1), 30)
-	var pg := maxi(0, page)
-	var list_url := "%s/asset?filter=%s&max_results=%s&page=%s&sort=relevance" % [
-		ASSET_LIB_API,
-		q.uri_encode(),
-		str(cap),
-		str(pg),
-	]
-	var res: Dictionary = await _do_request_json(list_url)
-	if not res.ok:
-		return {"ok": false, "plugins": [], "total_matches": 0, "error": res.get("text", res.error)}
-	var parsed: Variant = JSON.parse_string(res.text)
-	if parsed == null or not parsed is Dictionary:
-		return {"ok": false, "plugins": [], "total_matches": 0, "error": "invalid_json"}
-	var root: Dictionary = parsed
-	var rows: Variant = root.get("result", [])
-	var total_matches: int = int(root.get("total_items", 0))
-	var arr: Array = rows if rows is Array else []
-	var plugins: Array = []
-	for row in arr:
-		if plugins.size() >= cap:
-			break
-		if not row is Dictionary:
-			continue
-		var rd: Dictionary = row
-		var rid := str(rd.get("asset_id", "")).strip_edges()
-		if rid.is_empty():
-			continue
-		var detail_url := "%s/asset/%s" % [ASSET_LIB_API, rid.uri_encode()]
-		var dres: Dictionary = await _do_request_json(detail_url)
-		if not dres.ok:
-			continue
-		var detail_parsed: Variant = JSON.parse_string(dres.text)
-		if detail_parsed == null or not detail_parsed is Dictionary:
-			continue
-		var det: Dictionary = detail_parsed
-		var browse := str(det.get("browse_url", "")).strip_edges()
-		var pr := GdlmRegistryLoader.parse_owner_repo(browse)
-		if pr.is_empty():
-			continue
-		var owner := str(pr.get("owner", ""))
-		var repo := str(pr.get("repo", ""))
-		if owner.is_empty() or repo.is_empty():
-			continue
-		var icon_u := str(det.get("icon_url", "")).strip_edges()
-		var al_page := "https://godotengine.org/asset-library/asset/%s" % rid.uri_encode()
-		plugins.append(
-			{
-				"name": str(det.get("title", "%s/%s" % [owner, repo])).strip_edges(),
-				"owner": owner,
-				"repo": repo,
-				"description": str(det.get("description", "")).strip_edges(),
-				"addon_dir": "",
-				"repo_html_url": browse,
-				"icon_url": icon_u,
-				"asset_library_id": rid,
-				"asset_library_url": al_page,
-				"_catalog_sort_unix": catalog_sort_unix_from_asset_detail(det),
-				"_activity_caption": activity_caption_for_asset_detail(det),
-				"_from_search": true,
-				"_from_asset_library": true,
-			}
-		)
-	return {"ok": true, "plugins": plugins, "total_matches": total_matches, "error": ""}

@@ -5,10 +5,13 @@ const PLUGIN_CARD := preload("res://addons/godot_lib_manager/ui/plugin_card.tscn
 ## Rows shown per Search pager step (after topic + release filters).
 const SEARCH_UI_PAGE_SIZE := 20
 const PSearchCatalogCache := preload("res://addons/godot_lib_manager/core/search_catalog_cache.gd")
-## Broad Asset Library filter when building the offline catalog (not per-user search).
-const CATALOG_ASSET_LIB_QUERY := "godot"
-## GitHub Search queries — topic-qualified repos only (no per-repo topic HTTP during catalog build).
-const CATALOG_GITHUB_QUERIES := ["topic:godot", "topic:gdextension"]
+## GitHub Search — avoid bare `topic:godot` (spam/off-topic repos tag it alongside Unity/Java/etc.).
+const CATALOG_GITHUB_QUERIES := [
+	"topic:godot-addon",
+	"topic:godot-plugin",
+	"topic:godot-engine",
+	"topic:gdextension",
+]
 ## 3 days — must be a literal (GDScript const cannot use int() or PackedStringArray(...) ctor).
 const CATALOG_CACHE_MAX_AGE_SEC := 259200
 const PSettings := preload("res://addons/godot_lib_manager/core/settings.gd")
@@ -38,8 +41,6 @@ var _catalog_entries: Array = []
 var _catalog_ready: bool = false
 var _catalog_saved_unix: int = 0
 var _catalog_refresh_running: bool = false
-## Search/catalog only: 0 = all, 1 = GitHub snapshot only, 2 = Asset Library only.
-var _catalog_source_filter: int = 0
 ## Cancels stale `_run_paged_search` after overlapping navigations (reset path awaits catalog).
 var _paged_search_serial: int = 0
 
@@ -48,7 +49,6 @@ var _paged_search_serial: int = 0
 @onready var _detail_title: Label = %DetailTitle
 @onready var _detail_source: Label = %DetailSource
 @onready var _open_repo_btn: Button = %OpenRepoButton
-@onready var _open_al_btn: Button = %OpenAssetLibButton
 @onready var _detail_desc: TextEdit = %DetailDesc
 @onready var _release_option: OptionButton = %ReleaseOption
 @onready var _release_notes: TextEdit = %ReleaseNotes
@@ -63,7 +63,6 @@ var _paged_search_serial: int = 0
 @onready var _remove_repo_btn: Button = %RemoveRepoButton
 @onready var _search_edit: LineEdit = %SearchLineEdit
 @onready var _search_btn: Button = %SearchButton
-@onready var _catalog_source_option: OptionButton = %CatalogSourceOption
 @onready var _search_banner: Label = %SearchBanner
 @onready var _search_pager_wrap: VBoxContainer = %SearchPagerWrap
 @onready var _search_pager: HBoxContainer = %SearchPager
@@ -103,15 +102,8 @@ func _ready() -> void:
 	_search_prev_btn.pressed.connect(_on_search_prev_page_pressed)
 	_search_next_btn.pressed.connect(_on_search_next_page_pressed)
 	_search_last_btn.pressed.connect(_on_search_last_page_pressed)
-	_catalog_source_option.add_item("All sources")
-	_catalog_source_option.add_item("GitHub only")
-	_catalog_source_option.add_item("Asset Library only")
-	_catalog_source_option.select(0)
-	_catalog_source_option.item_selected.connect(_on_catalog_source_filter_selected)
-	_sync_catalog_source_filter_enabled()
 	_add_to_my_list_btn.pressed.connect(_on_add_to_my_list_pressed)
 	_open_repo_btn.pressed.connect(_on_open_repo_page_pressed)
-	_open_al_btn.pressed.connect(_on_open_asset_lib_page_pressed)
 	_release_option.item_selected.connect(_on_release_selected)
 	_install_btn.pressed.connect(_on_install_pressed)
 	_update_btn.pressed.connect(_on_update_pressed)
@@ -191,11 +183,32 @@ func _clear_detail_panel() -> void:
 	_detail_source.text = ""
 	_detail_desc.text = ""
 	_open_repo_btn.disabled = true
-	_open_al_btn.visible = false
 	_release_option.clear()
 	_release_option.disabled = true
 	_release_notes.text = ""
 	_refresh_install_buttons()
+
+
+## Drop obvious non-Godot junk that still slips through search (e.g. Java servers with topic godot).
+func _github_catalog_repo_passes_relevance(repo: Dictionary) -> bool:
+	var tv: Variant = repo.get("topics", [])
+	var topics: Array = tv if tv is Array else []
+	var lang := str(repo.get("language", "")).strip_edges()
+	var strong := false
+	var needles := ["godot-addon", "godot-plugin", "gdextension", "godot-engine", "godot-gdextension", "gdplugin"]
+	for t in topics:
+		var s := str(t).to_lower().strip_edges()
+		for n in needles:
+			if s == n or s.contains(n):
+				strong = true
+				break
+		if strong:
+			break
+	if strong:
+		return true
+	if lang in ["Java", "Kotlin", "Scala", "Clojure"]:
+		return false
+	return true
 
 
 func _github_items_to_plugin_entries(items: Array) -> Array:
@@ -204,6 +217,8 @@ func _github_items_to_plugin_entries(items: Array) -> Array:
 		if not it is Dictionary:
 			continue
 		var d: Dictionary = it
+		if not _github_catalog_repo_passes_relevance(d):
+			continue
 		var fn := str(d.get("full_name", ""))
 		if fn.is_empty():
 			continue
@@ -259,49 +274,13 @@ func _sort_catalog_newest_first(items: Array) -> void:
 	)
 
 
-func _catalog_entry_matches_source_filter(d: Dictionary) -> bool:
-	match _catalog_source_filter:
-		1:
-			return d.get("_from_github", false) == true
-		2:
-			return d.get("_from_asset_library", false) == true
-		_:
-			return true
-
-
-func _catalog_source_filter_label() -> String:
-	match _catalog_source_filter:
-		1:
-			return "GitHub only"
-		2:
-			return "Asset Library only"
-		_:
-			return "All sources"
-
-
-func _sync_catalog_source_filter_enabled() -> void:
-	if is_instance_valid(_catalog_source_option):
-		_catalog_source_option.disabled = not _showing_search_results
-
-
-func _on_catalog_source_filter_selected(index: int) -> void:
-	_catalog_source_filter = index
-	if not _catalog_ready or not _showing_search_results:
-		return
-	await _run_paged_search(true)
-
-
 func _filter_catalog_entries_local(all_entries: Array, q: String) -> Array:
 	var qn := q.strip_edges().to_lower()
 	if qn.is_empty():
 		var dup: Array = []
 		for e in all_entries:
-			if not e is Dictionary:
-				continue
-			var ed: Dictionary = e as Dictionary
-			if not _catalog_entry_matches_source_filter(ed):
-				continue
-			dup.append(ed.duplicate(true))
+			if e is Dictionary:
+				dup.append((e as Dictionary).duplicate(true))
 		## Empty keyword = browse full catalog: newest → oldest by stored dates.
 		_sort_catalog_newest_first(dup)
 		return dup
@@ -311,8 +290,6 @@ func _filter_catalog_entries_local(all_entries: Array, q: String) -> Array:
 		if not e is Dictionary:
 			continue
 		var d: Dictionary = e
-		if not _catalog_entry_matches_source_filter(d):
-			continue
 		var hay := (
 			"%s %s %s %s"
 			% [
@@ -332,22 +309,18 @@ func _filter_catalog_entries_local(all_entries: Array, q: String) -> Array:
 				break
 		if ok:
 			out.append(d.duplicate(true))
-	## Same rule as empty search: newest activity first (GitHub last push / Asset Lib modify date).
+	## Same rule as empty search: newest first by stored push time.
 	_sort_catalog_newest_first(out)
 	return out
 
 
 func _ensure_catalog_ready() -> void:
+	## First catalog build: GitHub search API pages only (no frame cap).
 	var spins := 0
 	while not _catalog_ready:
 		spins += 1
-		if spins > 7200:
-			if not _catalog_ready:
-				_catalog_ready = true
-				_show_error("Search catalog timed out. Restart the editor or try again.")
-			break
-		if spins % 45 == 1:
-			_status("Waiting for search catalog…")
+		if spins % 120 == 1:
+			_status("Waiting for search catalog (building GitHub topic index)…")
 		await get_tree().process_frame
 
 
@@ -392,39 +365,6 @@ func _catalog_refresh_stale_async() -> void:
 func _fetch_catalog_from_network() -> void:
 	var seen: Dictionary = {}
 	var merged: Array = []
-
-	var al_total_known := -1
-	var al_page := 0
-	while true:
-		_status("Catalog — Asset Library page %s…" % str(al_page + 1))
-		var al_res: Dictionary = await _github.search_asset_library_plugins(
-			CATALOG_ASSET_LIB_QUERY, 30, al_page
-		)
-		_update_rate_label()
-		if not al_res.get("ok", false):
-			break
-		if al_total_known < 0:
-			al_total_known = int(al_res.get("total_matches", 0))
-		var plugs: Array = al_res.get("plugins", [])
-		if plugs.is_empty():
-			break
-		for p in plugs:
-			if not p is Dictionary:
-				continue
-			var d: Dictionary = p
-			var k := PRegistryLoader.canonical_owner_repo(
-				"%s/%s" % [str(d.get("owner", "")), str(d.get("repo", ""))]
-			)
-			if k.is_empty() or seen.has(k):
-				continue
-			seen[k] = true
-			merged.append(d.duplicate(true))
-		al_page += 1
-		if al_total_known >= 0 and (al_page * 30) >= al_total_known:
-			break
-		if al_page > 400:
-			push_warning("GodotLibManager: Asset Library catalog page guard")
-			break
 
 	var gh_pp := 100
 	for qry in CATALOG_GITHUB_QUERIES:
@@ -643,17 +583,15 @@ func _run_paged_search(reset_page: bool) -> void:
 	var age_h := int((Time.get_unix_time_from_system() - _catalog_saved_unix) / 3600.0)
 	_search_banner.text = (
 		"Offline catalog — %s match(es), showing %s on this page (%s per page). "
-		+ "Source filter: %s. "
-		+ "Catalog holds %s repos (Asset Library + GitHub topic snapshot). "
-		+ "Sorted by activity date (GitHub: last push to default branch; Asset Lib: library record date) — see each row. "
-		+ "Not sorted by latest GitHub release (would need one API call per repo). "
+		+ "Catalog holds %s repos (GitHub topic search snapshot). "
+		+ "Sorted by last push to default branch — see each row. "
+		+ "Not sorted by latest release (would need one API call per repo). "
 		+ "Keyword filter is local. Releases load when you select a repo. "
 		+ "Cache age ~%s h. My List: saved registries."
 	) % [
 		str(filtered_total),
 		str(_plugins.size()),
 		str(SEARCH_UI_PAGE_SIZE),
-		_catalog_source_filter_label(),
 		str(catalog_total),
 		str(maxi(0, age_h)),
 	]
@@ -663,27 +601,14 @@ func _run_paged_search(reset_page: bool) -> void:
 	var pages := _filled_ui_pages_count()
 	if reset_page:
 		_status(
-			"Filtered %s / %s catalog · page %s/%s · %s."
-			% [
-				str(filtered_total),
-				str(catalog_total),
-				str(_search_ui_page),
-				str(pages),
-				_catalog_source_filter_label(),
-			]
+			"Filtered %s / %s catalog · page %s/%s."
+			% [str(filtered_total), str(catalog_total), str(_search_ui_page), str(pages)]
 		)
 	else:
 		_status(
-			"Page %s/%s · %s rows · %s matches · %s (local)."
-			% [
-				str(_search_ui_page),
-				str(pages),
-				str(_plugins.size()),
-				str(filtered_total),
-				_catalog_source_filter_label(),
-			]
+			"Page %s/%s · %s rows · %s matches (local)."
+			% [str(_search_ui_page), str(pages), str(_plugins.size()), str(filtered_total)]
 		)
-	_sync_catalog_source_filter_enabled()
 
 
 func _on_github_search_pressed() -> void:
@@ -778,8 +703,6 @@ func _rebuild_plugin_cards() -> void:
 		var installed := PSettings.get_installed_for_source(_config, owner_s, repo_s)
 		if not installed.is_empty():
 			card.set_badge("Installed: %s" % str(installed.get("version", "?")))
-		elif d.get("_from_asset_library", false):
-			card.set_badge("Asset Library")
 		elif d.get("_from_search", false):
 			card.set_badge("GitHub")
 		else:
@@ -799,34 +722,11 @@ func _repo_page_url(plugin: Dictionary) -> String:
 	return "https://github.com/%s/%s" % [o, r]
 
 
-## Official Godot Asset Library web page for this entry (browser).
-func _asset_library_public_url(plugin: Dictionary) -> String:
-	var u := str(plugin.get("asset_library_url", "")).strip_edges()
-	if not u.is_empty():
-		if not u.begins_with("http://") and not u.begins_with("https://"):
-			u = "https://" + u.lstrip("/")
-		return u
-	var aid := str(plugin.get("asset_library_id", "")).strip_edges()
-	if not aid.is_empty():
-		return "https://godotengine.org/asset-library/asset/%s" % aid.uri_encode()
-	return ""
-
-
 func _on_open_repo_page_pressed() -> void:
 	var u := _repo_page_url(_selected)
 	if u.is_empty():
 		return
 	OS.shell_open(u)
-
-
-func _on_open_asset_lib_page_pressed() -> void:
-	## Switch to the editor’s built-in Asset Library tab (same workspace as 2D / 3D / Script).
-	if editor_plugin:
-		editor_plugin.get_editor_interface().set_main_screen_editor("AssetLib")
-		return
-	var u := _asset_library_public_url(_selected)
-	if not u.is_empty():
-		OS.shell_open(u)
 
 
 func _on_plugin_card_pressed(plugin: Dictionary) -> void:
@@ -847,7 +747,6 @@ func _on_plugin_card_pressed(plugin: Dictionary) -> void:
 	_detail_source.text = "%s/%s" % [str(plugin.get("owner", "")), str(plugin.get("repo", ""))]
 	_detail_desc.text = str(plugin.get("description", ""))
 	_open_repo_btn.disabled = _repo_page_url(_selected).is_empty()
-	_open_al_btn.visible = not _asset_library_public_url(_selected).is_empty()
 	_release_option.clear()
 	_release_option.disabled = true
 	_release_notes.text = ""
@@ -951,7 +850,6 @@ func _refresh_plugin_list() -> void:
 	_rebuild_plugin_cards()
 	_status("Loaded %s plugin(s)." % str(_plugins.size()))
 	_refresh_install_buttons()
-	_sync_catalog_source_filter_enabled()
 
 
 func _on_add_repo_pressed() -> void:
@@ -1160,5 +1058,6 @@ func _on_settings_window_close_requested() -> void:
 	_apply_settings_fields_to_config()
 	if PSettings.save_config(_config) != OK:
 		_show_error("Could not save settings to disk. Check editor Output for details.")
+		return
 	_settings_window.hide()
 	await _refresh_plugin_list()

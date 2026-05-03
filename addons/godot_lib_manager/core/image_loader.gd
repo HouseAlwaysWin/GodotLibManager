@@ -4,28 +4,68 @@ class_name GdlmImageLoader
 const MAX_ICON_SIDE := 160
 
 
+## Godot’s PNG loader logs ERROR to the editor if you feed it JPEG/WebP — sniff format first.
+static func _try_one_loader(data: PackedByteArray, which: int) -> Image:
+	var img := Image.new()
+	var ok: Error
+	match which:
+		1:
+			ok = img.load_png_from_buffer(data)
+		2:
+			ok = img.load_jpg_from_buffer(data)
+		3:
+			ok = img.load_webp_from_buffer(data)
+		4:
+			ok = img.load_bmp_from_buffer(data)
+		5:
+			ok = img.load_tga_from_buffer(data)
+		6:
+			ok = img.load_svg_from_buffer(data, 1.0)
+		_:
+			return null
+	if ok == OK:
+		return img
+	return null
+
+
 static func decode_image(data: PackedByteArray) -> Image:
 	if data.is_empty():
 		return null
-	var img: Image
-	img = Image.new()
-	if img.load_png_from_buffer(data) == OK:
-		return img
-	img = Image.new()
-	if img.load_jpg_from_buffer(data) == OK:
-		return img
-	img = Image.new()
-	if img.load_webp_from_buffer(data) == OK:
-		return img
-	img = Image.new()
-	if img.load_tga_from_buffer(data) == OK:
-		return img
-	img = Image.new()
-	if img.load_bmp_from_buffer(data) == OK:
-		return img
-	img = Image.new()
-	if img.load_svg_from_buffer(data, 1.0) == OK:
-		return img
+	## Some CDNs return HTML on error — don’t run binary decoders.
+	if data.size() >= 2:
+		var probe := data.slice(0, mini(256, data.size()))
+		var head := probe.get_string_from_utf8().strip_edges()
+		var hl := head.to_lower()
+		var looks_svg := hl.begins_with("<svg") or (hl.begins_with("<?xml") and "<svg" in hl)
+		if head.begins_with("<") and not looks_svg:
+			return null
+	## PNG
+	if data.size() >= 8 and data[0] == 0x89 and data[1] == 0x50 and data[2] == 0x4E and data[3] == 0x47:
+		return _try_one_loader(data, 1)
+	## JPEG
+	if data.size() >= 3 and data[0] == 0xFF and data[1] == 0xD8 and data[2] == 0xFF:
+		return _try_one_loader(data, 2)
+	## WebP (RIFF....WEBP)
+	if (
+		data.size() >= 12
+		and data[0] == 0x52
+		and data[1] == 0x49
+		and data[2] == 0x46
+		and data[3] == 0x46
+		and data[8] == 0x57
+		and data[9] == 0x45
+		and data[10] == 0x42
+		and data[11] == 0x50
+	):
+		return _try_one_loader(data, 3)
+	## BMP
+	if data.size() >= 2 and data[0] == 0x42 and data[1] == 0x4D:
+		return _try_one_loader(data, 4)
+	## No PNG magic: do not call load_png_from_buffer (it still logs ERR_FILE_CORRUPT on random bytes).
+	for which in [2, 3, 4, 5, 6]:
+		var got := _try_one_loader(data, which)
+		if got != null:
+			return got
 	return null
 
 

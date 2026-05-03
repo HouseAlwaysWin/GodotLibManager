@@ -44,9 +44,7 @@ func _apply() -> void:
 		var u := int(_plugin.get("_catalog_sort_unix", 0))
 		if u > 0:
 			var ts := Time.get_datetime_string_from_unix_time(u, true)
-			if _plugin.get("_from_asset_library", false):
-				cap = "Asset Lib updated: %s" % ts
-			elif _plugin.get("_from_github", false):
+			if _plugin.get("_from_github", false):
 				cap = "Last push: %s" % ts
 			else:
 				cap = "Updated: %s" % ts
