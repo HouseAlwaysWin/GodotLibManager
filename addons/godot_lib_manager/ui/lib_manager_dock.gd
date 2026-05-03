@@ -40,6 +40,8 @@ var _catalog_saved_unix: int = 0
 var _catalog_refresh_running: bool = false
 ## Search/catalog only: 0 = all, 1 = GitHub snapshot only, 2 = Asset Library only.
 var _catalog_source_filter: int = 0
+## Cancels stale `_run_paged_search` after overlapping navigations (reset path awaits catalog).
+var _paged_search_serial: int = 0
 
 @onready var _plugin_list: VBoxContainer = %PluginList
 @onready var _detail_icon: TextureRect = %DetailIcon
@@ -63,6 +65,7 @@ var _catalog_source_filter: int = 0
 @onready var _search_btn: Button = %SearchButton
 @onready var _catalog_source_option: OptionButton = %CatalogSourceOption
 @onready var _search_banner: Label = %SearchBanner
+@onready var _search_pager_wrap: VBoxContainer = %SearchPagerWrap
 @onready var _search_pager: HBoxContainer = %SearchPager
 @onready var _search_first_btn: Button = %SearchFirstPage
 @onready var _search_prev_btn: Button = %SearchPrevPage
@@ -468,7 +471,10 @@ func _update_search_pager() -> void:
 	if not is_instance_valid(_search_pager):
 		return
 	var show := _showing_search_results
-	_search_pager.visible = show
+	if is_instance_valid(_search_pager_wrap):
+		_search_pager_wrap.visible = show
+	else:
+		_search_pager.visible = show
 	if not show:
 		return
 	var filled := _filled_ui_pages_count()
@@ -481,7 +487,7 @@ func _update_search_pager() -> void:
 	if is_instance_valid(_search_next_btn):
 		_search_next_btn.disabled = at_end
 	if is_instance_valid(_search_last_btn):
-		_search_last_btn.disabled = filled <= 1
+		_search_last_btn.disabled = at_end
 	_rebuild_search_page_number_buttons(max_p)
 	if is_instance_valid(_search_meta_label):
 		var cat_n := _catalog_entries.size()
@@ -494,25 +500,54 @@ func _update_search_pager() -> void:
 func _rebuild_search_page_number_buttons(max_p: int) -> void:
 	if not is_instance_valid(_search_page_numbers):
 		return
-	for c in _search_page_numbers.get_children():
-		_search_page_numbers.remove_child(c)
-		c.free()
+	while _search_page_numbers.get_child_count() > 0:
+		var ch := _search_page_numbers.get_child(0)
+		_search_page_numbers.remove_child(ch)
+		ch.queue_free()
 	if max_p <= 0:
 		return
-	var span := mini(10, max_p)
-	var cur := _search_ui_page
-	var start := maxi(1, mini(cur - 4, max_p - span + 1))
-	var end := mini(max_p, start + span - 1)
-	for p in range(start, end + 1):
+	var cur := clampi(_search_ui_page, 1, max_p)
+	if max_p == 1:
+		var lone := Button.new()
+		lone.text = "1"
+		lone.flat = true
+		lone.focus_mode = Control.FOCUS_NONE
+		lone.custom_minimum_size = Vector2(28, 26)
+		lone.disabled = true
+		_search_page_numbers.add_child(lone)
+		return
+	## Compact pager: 1 … window around current … last — avoids a wide strip of 10+ buttons that gets clipped.
+	var delta := 2
+	var include: Dictionary = {}
+	include[1] = true
+	include[max_p] = true
+	var win_lo := maxi(2, cur - delta)
+	var win_hi := mini(max_p - 1, cur + delta)
+	for p in range(win_lo, win_hi + 1):
+		include[p] = true
+	var keys: Array = include.keys()
+	keys.sort_custom(func(a, b): return int(a) < int(b))
+	var prev_page := -1
+	for pv in keys:
+		var p: int = int(pv)
+		if prev_page >= 0 and p - prev_page > 1:
+			var ell := Label.new()
+			ell.text = "…"
+			ell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			ell.add_theme_font_size_override("font_size", 13)
+			ell.add_theme_color_override("font_color", Color(0.42, 0.46, 0.54, 1))
+			_search_page_numbers.add_child(ell)
 		var btn := Button.new()
 		btn.text = str(p)
 		btn.flat = true
 		btn.focus_mode = Control.FOCUS_NONE
-		btn.custom_minimum_size = Vector2(30, 26)
+		btn.custom_minimum_size = Vector2(28, 26)
 		var pg := p
 		btn.disabled = pg == cur
-		btn.pressed.connect(_on_search_page_number_pressed.bind(pg))
+		if not btn.disabled:
+			btn.pressed.connect(_on_search_page_number_pressed.bind(pg))
 		_search_page_numbers.add_child(btn)
+		prev_page = p
 
 
 func _on_search_page_number_pressed(page: int) -> void:
@@ -556,6 +591,8 @@ func _on_search_next_page_pressed() -> void:
 
 
 func _run_paged_search(reset_page: bool) -> void:
+	_paged_search_serial += 1
+	var run_id := _paged_search_serial
 	var q_input := _search_edit.text.strip_edges()
 	var q := q_input
 	if not reset_page:
@@ -566,6 +603,8 @@ func _run_paged_search(reset_page: bool) -> void:
 	## Pager must never await network — only Search waits for the catalog build.
 	if reset_page:
 		await _ensure_catalog_ready()
+		if run_id != _paged_search_serial:
+			return
 		if not _catalog_ready:
 			return
 	else:
@@ -593,6 +632,9 @@ func _run_paged_search(reset_page: bool) -> void:
 			var row: Variant = _search_filtered_accumulator[i]
 			if row is Dictionary:
 				_plugins.append((row as Dictionary).duplicate(true))
+
+	if run_id != _paged_search_serial:
+		return
 
 	_showing_search_results = true
 	var filtered_total := acc_n
@@ -888,7 +930,9 @@ func _refresh_plugin_list() -> void:
 	_search_filtered_accumulator.clear()
 	if _search_banner:
 		_search_banner.visible = false
-	if is_instance_valid(_search_pager):
+	if is_instance_valid(_search_pager_wrap):
+		_search_pager_wrap.visible = false
+	elif is_instance_valid(_search_pager):
 		_search_pager.visible = false
 	_config = PSettings.load_config()
 	_github.set_token(PSettings.get_github_token(_config))
