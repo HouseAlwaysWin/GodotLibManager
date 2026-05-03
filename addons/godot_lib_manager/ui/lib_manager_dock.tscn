@@ -1,0 +1,264 @@
+[gd_scene load_steps=4 format=3 uid="uid://gdlm_lib_manager_dock"]
+
+[ext_resource type="Script" path="res://addons/godot_lib_manager/ui/lib_manager_dock.gd" id="1_script"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_root"]
+bg_color = Color(0.09, 0.1, 0.12, 1)
+
+[node name="LibManagerDock" type="PanelContainer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_root")
+script = ExtResource("1_script")
+
+[node name="RootVBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="Toolbar" type="HBoxContainer" parent="RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="RefreshButton" type="Button" parent="RootVBox/Toolbar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Refresh"
+
+[node name="AddRepoButton" type="Button" parent="RootVBox/Toolbar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Add repo…"
+
+[node name="RemoveRepoButton" type="Button" parent="RootVBox/Toolbar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Remove repo…"
+
+[node name="SettingsButton" type="Button" parent="RootVBox/Toolbar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Token…"
+
+[node name="ToolbarSpacer" type="Control" parent="RootVBox/Toolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="BodySplit" type="HSplitContainer" parent="RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+split_offset = 300
+
+[node name="LeftScroll" type="ScrollContainer" parent="RootVBox/BodySplit"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="PluginList" type="VBoxContainer" parent="RootVBox/BodySplit/LeftScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="RightPanel" type="MarginContainer" parent="RootVBox/BodySplit"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="RightVBox" type="VBoxContainer" parent="RootVBox/BodySplit/RightPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="DetailTitle" type="Label" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.94, 0.95, 0.98, 1)
+theme_override_font_sizes/font_size = 18
+text = "Select a plugin"
+
+[node name="DetailSource" type="Label" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.62, 0.78, 1)
+theme_override_font_sizes/font_size = 13
+text = ""
+
+[node name="DetailDesc" type="TextEdit" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 72)
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_colors/font_readonly_color = Color(0.75, 0.78, 0.86, 1)
+editable = false
+wrap_mode = 1
+
+[node name="ReleaseLabel" type="Label" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "Release"
+
+[node name="ReleaseOption" type="OptionButton" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 0
+disabled = true
+
+[node name="ReleaseNotesLabel" type="Label" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Release notes"
+
+[node name="ReleaseNotes" type="TextEdit" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 120)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_readonly_color = Color(0.72, 0.75, 0.84, 1)
+editable = false
+wrap_mode = 1
+
+[node name="BtnRow" type="HBoxContainer" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="InstallButton" type="Button" parent="RootVBox/BodySplit/RightPanel/RightVBox/BtnRow"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+text = "Install"
+
+[node name="UpdateButton" type="Button" parent="RootVBox/BodySplit/RightPanel/RightVBox/BtnRow"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+text = "Update"
+
+[node name="UninstallButton" type="Button" parent="RootVBox/BodySplit/RightPanel/RightVBox/BtnRow"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+text = "Uninstall"
+
+[node name="StatusBar" type="HBoxContainer" parent="RootVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="RateLimitLabel" type="Label" parent="RootVBox/StatusBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.55, 0.62, 0.75, 1)
+theme_override_font_sizes/font_size = 11
+text = "Rate limit: —"
+
+[node name="StatusLabel" type="Label" parent="RootVBox/StatusBar"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.62, 0.68, 0.78, 1)
+theme_override_font_sizes/font_size = 11
+text = ""
+
+[node name="ErrorDialog" type="AcceptDialog" parent="."]
+unique_name_in_owner = true
+title = "Lib Manager"
+size = Vector2i(420, 160)
+
+[node name="SuccessDialog" type="AcceptDialog" parent="."]
+unique_name_in_owner = true
+title = "Installed"
+size = Vector2i(460, 200)
+
+[node name="InstallConfirm" type="ConfirmationDialog" parent="."]
+unique_name_in_owner = true
+title = "Confirm install"
+ok_button_text = "Install"
+dialog_text = "Extract addons/ from the release zip into this project. Existing files under those folders may be overwritten. A backup of existing addon folders will be created under user://gdlm_backup when possible."
+
+[node name="UninstallConfirm" type="ConfirmationDialog" parent="."]
+unique_name_in_owner = true
+title = "Confirm uninstall"
+ok_button_text = "Remove"
+dialog_text = "Remove installed addon folders from res://addons/ for this source?"
+
+[node name="AddManualDialog" type="ConfirmationDialog" parent="."]
+unique_name_in_owner = true
+title = "Add GitHub repo"
+ok_button_text = "Add"
+dialog_text = "Paste owner/repo or full github.com URL (see placeholder)."
+
+[node name="ManualLineEdit" type="LineEdit" parent="AddManualDialog"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 40.0
+grow_horizontal = 2
+placeholder_text = "HouseAlwaysWin/MyAddon or https://github.com/HouseAlwaysWin/MyAddon"
+
+[node name="RemoveRepoConfirm" type="ConfirmationDialog" parent="."]
+unique_name_in_owner = true
+title = "Remove from list"
+ok_button_text = "Remove"
+dialog_text = "Remove this repository from your list?"
+
+[node name="SettingsWindow" type="Window" parent="."]
+unique_name_in_owner = true
+title = "GitHub token"
+initial_position = 2
+size = Vector2i(480, 220)
+visible = false
+unresizable = true
+
+[node name="SettingsMargin" type="MarginContainer" parent="SettingsWindow"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="SettingsVBox" type="VBoxContainer" parent="SettingsWindow/SettingsMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SettingsIntro" type="Label" parent="SettingsWindow/SettingsMargin/SettingsVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.68, 0.72, 0.8, 1)
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 3
+text = "Optional GitHub token — raises API rate limits when querying releases. Leave empty for anonymous access (~60 requests/hour). Repositories: use Add repo / Remove repo on the toolbar (not this window)."
+
+[node name="TokenEdit" type="LineEdit" parent="SettingsWindow/SettingsMargin/SettingsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+secret = true
+placeholder_text = "ghp_… (optional)"
+
+[node name="SaveCloseButton" type="Button" parent="SettingsWindow/SettingsMargin/SettingsVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Save and Close"

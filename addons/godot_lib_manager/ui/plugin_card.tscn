@@ -1,0 +1,59 @@
+[gd_scene load_steps=3 format=3 uid="uid://gdlm_plugin_card"]
+
+[ext_resource type="Script" path="res://addons/godot_lib_manager/ui/plugin_card.gd" id="1_script"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_card"]
+bg_color = Color(0.12, 0.13, 0.16, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.28, 0.32, 0.4, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_right = 4
+corner_radius_bottom_left = 4
+content_margin_left = 10
+content_margin_top = 8
+content_margin_right = 10
+content_margin_bottom = 8
+
+[node name="PluginCard" type="PanelContainer"]
+custom_minimum_size = Vector2(200, 72)
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_card")
+script = ExtResource("1_script")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Title" type="Label" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.94, 0.98, 1)
+theme_override_font_sizes/font_size = 14
+text = "Plugin name"
+text_overrun_behavior = 3
+
+[node name="Source" type="Label" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.55, 0.62, 0.75, 1)
+theme_override_font_sizes/font_size = 12
+text = "owner/repo"
+
+[node name="Description" type="Label" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.74, 0.82, 1)
+theme_override_font_sizes/font_size = 11
+text = "Description"
+autowrap_mode = 3
+
+[node name="Badge" type="Label" parent="VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.45, 0.82, 0.62, 1)
+theme_override_font_sizes/font_size = 11
+text = ""
