@@ -1,0 +1,70 @@
+# Build addons/godot_lib_manager as a zip (addons/… layout) and publish a GitHub Release.
+#
+# Typical flow:
+#   1. Set version="x.y.z" in addons/godot_lib_manager/plugin.cfg and commit.
+#   2. git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# Or: Actions → Release addon zip → Run workflow → enter version (must match plugin.cfg).
+
+name: Release addon zip
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver (e.g. 1.0.1) — must match addons/godot_lib_manager/plugin.cfg"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.version }}"
+          else
+            RAW="${GITHUB_REF_NAME}"
+          fi
+          RAW="${RAW#v}"
+          RAW="${RAW#V}"
+          echo "VERSION=$RAW" >> "$GITHUB_ENV"
+
+      - name: Verify plugin.cfg matches release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          CFG="$(grep -E '^\s*version\s*=' addons/godot_lib_manager/plugin.cfg | head -1 | sed -E 's/.*=\s*"([^"]*)".*/\1/')"
+          if [ "$CFG" != "$VERSION" ]; then
+            echo "::error file=addons/godot_lib_manager/plugin.cfg::plugin.cfg version is \"$CFG\" but release is v$VERSION. Update plugin.cfg to \"$VERSION\" first."
+            exit 1
+          fi
+
+      - name: Package addon zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staging/addons
+          cp -a addons/godot_lib_manager staging/addons/
+          (cd staging && zip -qr "../GodotLibManager_v${VERSION}.zip" addons)
+          ls -la "GodotLibManager_v${VERSION}.zip"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Godot Lib Manager ${{ env.VERSION }}
+          tag_name: v${{ env.VERSION }}
+          files: GodotLibManager_v${{ env.VERSION }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
