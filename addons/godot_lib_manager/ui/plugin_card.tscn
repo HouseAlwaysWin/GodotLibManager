@@ -19,16 +19,29 @@ content_margin_right = 10
 content_margin_bottom = 8
 
 [node name="PluginCard" type="PanelContainer"]
-custom_minimum_size = Vector2(200, 72)
+custom_minimum_size = Vector2(200, 80)
 mouse_filter = 0
 theme_override_styles/panel = SubResource("StyleBoxFlat_card")
 script = ExtResource("1_script")
 
-[node name="VBox" type="VBoxContainer" parent="."]
+[node name="HBox" type="HBoxContainer" parent="."]
 layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Icon" type="TextureRect" parent="HBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(48, 48)
+layout_mode = 2
+size_flags_vertical = 0
+expand_mode = 1
+stretch_mode = 5
+
+[node name="VBox" type="VBoxContainer" parent="HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
-[node name="Title" type="Label" parent="VBox"]
+[node name="Title" type="Label" parent="HBox/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.92, 0.94, 0.98, 1)
@@ -36,14 +49,14 @@ theme_override_font_sizes/font_size = 14
 text = "Plugin name"
 text_overrun_behavior = 3
 
-[node name="Source" type="Label" parent="VBox"]
+[node name="Source" type="Label" parent="HBox/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.55, 0.62, 0.75, 1)
 theme_override_font_sizes/font_size = 12
 text = "owner/repo"
 
-[node name="Description" type="Label" parent="VBox"]
+[node name="Description" type="Label" parent="HBox/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.7, 0.74, 0.82, 1)
@@ -51,7 +64,7 @@ theme_override_font_sizes/font_size = 11
 text = "Description"
 autowrap_mode = 3
 
-[node name="Badge" type="Label" parent="VBox"]
+[node name="Badge" type="Label" parent="HBox/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_colors/font_color = Color(0.45, 0.82, 0.62, 1)

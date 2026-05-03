@@ -123,6 +123,23 @@ theme_override_colors/font_color = Color(0.55, 0.62, 0.78, 1)
 theme_override_font_sizes/font_size = 13
 text = ""
 
+[node name="DetailLinks" type="HBoxContainer" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="OpenRepoButton" type="Button" parent="RootVBox/BodySplit/RightPanel/RightVBox/DetailLinks"]
+unique_name_in_owner = true
+layout_mode = 2
+disabled = true
+text = "Open repository page"
+
+[node name="OpenAssetLibButton" type="Button" parent="RootVBox/BodySplit/RightPanel/RightVBox/DetailLinks"]
+unique_name_in_owner = true
+layout_mode = 2
+visible = false
+text = "View on Asset Library"
+
 [node name="DetailDesc" type="TextEdit" parent="RootVBox/BodySplit/RightPanel/RightVBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 72)

@@ -22,6 +22,8 @@ var _showing_search_results: bool = false
 @onready var _plugin_list: VBoxContainer = %PluginList
 @onready var _detail_title: Label = %DetailTitle
 @onready var _detail_source: Label = %DetailSource
+@onready var _open_repo_btn: Button = %OpenRepoButton
+@onready var _open_al_btn: Button = %OpenAssetLibButton
 @onready var _detail_desc: TextEdit = %DetailDesc
 @onready var _release_option: OptionButton = %ReleaseOption
 @onready var _release_notes: TextEdit = %ReleaseNotes
@@ -64,6 +66,8 @@ func _ready() -> void:
 	_search_btn.pressed.connect(_on_github_search_pressed)
 	_search_edit.text_submitted.connect(_on_github_search_submitted)
 	_add_to_my_list_btn.pressed.connect(_on_add_to_my_list_pressed)
+	_open_repo_btn.pressed.connect(_on_open_repo_page_pressed)
+	_open_al_btn.pressed.connect(_on_open_asset_lib_page_pressed)
 	_release_option.item_selected.connect(_on_release_selected)
 	_install_btn.pressed.connect(_on_install_pressed)
 	_update_btn.pressed.connect(_on_update_pressed)
@@ -128,6 +132,8 @@ func _clear_detail_panel() -> void:
 	_detail_title.text = "Select a plugin"
 	_detail_source.text = ""
 	_detail_desc.text = ""
+	_open_repo_btn.disabled = true
+	_open_al_btn.visible = false
 	_release_option.clear()
 	_release_option.disabled = true
 	_release_notes.text = ""
@@ -146,6 +152,13 @@ func _github_items_to_plugin_entries(items: Array) -> Array:
 		var parts := fn.split("/", false)
 		if parts.size() < 2:
 			continue
+		var owner_obj: Variant = d.get("owner", {})
+		var icon_url := ""
+		if owner_obj is Dictionary:
+			icon_url = str(owner_obj.get("avatar_url", "")).strip_edges()
+		var repo_url := str(d.get("html_url", "")).strip_edges()
+		if repo_url.is_empty():
+			repo_url = "https://github.com/%s/%s" % [str(parts[0]), str(parts[1])]
 		out.append(
 			{
 				"name": fn,
@@ -153,6 +166,8 @@ func _github_items_to_plugin_entries(items: Array) -> Array:
 				"repo": str(parts[1]),
 				"description": str(d.get("description", "")),
 				"addon_dir": "",
+				"repo_html_url": repo_url,
+				"icon_url": icon_url,
 				"_from_search": true,
 				"_from_github": true,
 			}
@@ -311,11 +326,41 @@ func _rebuild_plugin_cards() -> void:
 		_plugin_list.add_child(card)
 
 
+func _repo_page_url(plugin: Dictionary) -> String:
+	var u := str(plugin.get("repo_html_url", "")).strip_edges()
+	if not u.is_empty():
+		return u
+	var o := str(plugin.get("owner", "")).strip_edges()
+	var r := str(plugin.get("repo", "")).strip_edges()
+	if o.is_empty() or r.is_empty():
+		return ""
+	return "https://github.com/%s/%s" % [o, r]
+
+
+func _on_open_repo_page_pressed() -> void:
+	var u := _repo_page_url(_selected)
+	if u.is_empty():
+		return
+	OS.shell_open(u)
+
+
+func _on_open_asset_lib_page_pressed() -> void:
+	var u := str(_selected.get("asset_library_url", "")).strip_edges()
+	if u.is_empty():
+		return
+	OS.shell_open(u)
+
+
 func _on_plugin_card_pressed(plugin: Dictionary) -> void:
 	_selected = plugin.duplicate(true)
+	if str(_selected.get("repo_html_url", "")).strip_edges().is_empty():
+		_selected["repo_html_url"] = _repo_page_url(_selected)
 	_detail_title.text = str(plugin.get("name", ""))
 	_detail_source.text = "%s/%s" % [str(plugin.get("owner", "")), str(plugin.get("repo", ""))]
 	_detail_desc.text = str(plugin.get("description", ""))
+	_open_repo_btn.disabled = _repo_page_url(_selected).is_empty()
+	var al := str(_selected.get("asset_library_url", "")).strip_edges()
+	_open_al_btn.visible = not al.is_empty()
 	_release_option.clear()
 	_release_option.disabled = true
 	_release_notes.text = ""

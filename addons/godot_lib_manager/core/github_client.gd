@@ -234,6 +234,8 @@ func search_asset_library_plugins(query: String, max_results: int = 15) -> Dicti
 		var repo := str(pr.get("repo", ""))
 		if owner.is_empty() or repo.is_empty():
 			continue
+		var icon_u := str(det.get("icon_url", "")).strip_edges()
+		var al_page := "https://godotengine.org/asset-library/asset/%s" % rid.uri_encode()
 		plugins.append(
 			{
 				"name": str(det.get("title", "%s/%s" % [owner, repo])).strip_edges(),
@@ -241,6 +243,9 @@ func search_asset_library_plugins(query: String, max_results: int = 15) -> Dicti
 				"repo": repo,
 				"description": str(det.get("description", "")).strip_edges(),
 				"addon_dir": "",
+				"repo_html_url": browse,
+				"icon_url": icon_u,
+				"asset_library_url": al_page,
 				"_from_search": true,
 				"_from_asset_library": true,
 			}

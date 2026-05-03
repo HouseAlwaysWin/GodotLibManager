@@ -67,12 +67,16 @@ static func _entry_from_registry_dict(d: Dictionary) -> Dictionary:
 	if owner.is_empty() or repo.is_empty():
 		return {}
 	var name := str(d.get("name", "%s/%s" % [owner, repo])).strip_edges()
+	var repo_url := str(d.get("repo_html_url", "")).strip_edges()
+	if repo_url.is_empty():
+		repo_url = "https://github.com/%s/%s" % [owner, repo]
 	return {
 		"name": name,
 		"owner": owner,
 		"repo": repo,
 		"description": str(d.get("description", "")),
 		"addon_dir": str(d.get("addon_dir", "")).strip_edges(),
+		"repo_html_url": repo_url,
 	}
 
 
@@ -145,6 +149,7 @@ static func load_manual_entries(repos: PackedStringArray) -> Array:
 				"repo": repo,
 				"description": "",
 				"addon_dir": "",
+				"repo_html_url": "https://github.com/%s/%s" % [owner, repo],
 			}
 		)
 	return _dedupe_by_source(out)
