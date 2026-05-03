@@ -200,15 +200,18 @@ func fetch_text(url: String) -> Dictionary:
 
 
 ## GitHub Search API — returns { ok, items: Array[Dictionary], total, error }.
-## Unfiltered query (user may see unrelated repos; combined with Asset Library search in the UI).
-func search_repositories(query: String, page: int = 1) -> Dictionary:
+## GitHub allows at most ~1000 hits per query; `per_page` max 100.
+func search_repositories(query: String, page: int = 1, per_page: int = 30) -> Dictionary:
 	var q := query.strip_edges()
 	if q.is_empty():
 		return {"ok": false, "items": [], "total": 0, "error": "empty_query"}
-	var pg := mini(maxi(page, 1), 10)
-	var url := "%s/search/repositories?q=%s&sort=stars&per_page=15&page=%s" % [
+	var pp := clampi(per_page, 1, 100)
+	var max_page := maxi(1, mini(100, int(ceil(1000.0 / float(pp)))))
+	var pg := clampi(page, 1, max_page)
+	var url := "%s/search/repositories?q=%s&sort=stars&per_page=%s&page=%s" % [
 		API_BASE,
 		q.uri_encode(),
+		str(pp),
 		str(pg),
 	]
 	var res: Dictionary = await _do_request(url, true)
@@ -228,15 +231,19 @@ func search_repositories(query: String, page: int = 1) -> Dictionary:
 
 ## Official Godot Asset Library — resolves browse_url to GitHub owner/repo; install still uses GitHub releases.
 ## Returns { ok, plugins: Array[Dictionary], total_matches, error } — same plugin shape as registry entries + _from_search, _from_asset_library.
-func search_asset_library_plugins(query: String, max_results: int = 15) -> Dictionary:
+func search_asset_library_plugins(
+	query: String, max_results: int = 30, page: int = 0
+) -> Dictionary:
 	var q := query.strip_edges()
 	if q.is_empty():
 		return {"ok": false, "plugins": [], "total_matches": 0, "error": "empty_query"}
 	var cap := mini(maxi(max_results, 1), 30)
-	var list_url := "%s/asset?filter=%s&max_results=%s&page=0&sort=relevance" % [
+	var pg := maxi(0, page)
+	var list_url := "%s/asset?filter=%s&max_results=%s&page=%s&sort=relevance" % [
 		ASSET_LIB_API,
 		q.uri_encode(),
 		str(cap),
+		str(pg),
 	]
 	var res: Dictionary = await _do_request_json(list_url)
 	if not res.ok:

@@ -2,6 +2,7 @@
 extends PanelContainer
 
 const PLUGIN_CARD := preload("res://addons/godot_lib_manager/ui/plugin_card.tscn")
+const SEARCH_RESULTS_PER_PAGE := 30
 const PSettings := preload("res://addons/godot_lib_manager/core/settings.gd")
 const PGithubClient := preload("res://addons/godot_lib_manager/core/github_client.gd")
 const PRegistryLoader := preload("res://addons/godot_lib_manager/core/registry_loader.gd")
@@ -18,6 +19,14 @@ var _plugins: Array = []
 var _releases: Array = []
 var _selected: Dictionary = {}
 var _showing_search_results: bool = false
+var _search_github_page: int = 1
+var _search_github_total_count: int = 0
+## Query string used for the current paginated search session (Prev/Next); avoids mismatch if LineEdit is edited.
+var _search_active_query: String = ""
+## Normalized query key for invalidating in-memory page cache when the user runs a different Search.
+var _search_cache_session_key: String = ""
+## Key `"{query}|gh_page={n}"` -> filtered plugin rows + banner stats for that page.
+var _search_page_cache: Dictionary = {}
 
 @onready var _plugin_list: VBoxContainer = %PluginList
 @onready var _detail_icon: TextureRect = %DetailIcon
@@ -40,6 +49,10 @@ var _showing_search_results: bool = false
 @onready var _search_edit: LineEdit = %SearchLineEdit
 @onready var _search_btn: Button = %SearchButton
 @onready var _search_banner: Label = %SearchBanner
+@onready var _search_pager: HBoxContainer = %SearchPager
+@onready var _search_prev_btn: Button = %SearchPrevPage
+@onready var _search_page_label: Label = %SearchPageLabel
+@onready var _search_next_btn: Button = %SearchNextPage
 @onready var _add_to_my_list_btn: Button = %AddToMyListButton
 @onready var _error_dialog: AcceptDialog = %ErrorDialog
 @onready var _success_dialog: AcceptDialog = %SuccessDialog
@@ -66,6 +79,8 @@ func _ready() -> void:
 	_remove_repo_btn.pressed.connect(_on_remove_repo_pressed)
 	_search_btn.pressed.connect(_on_github_search_pressed)
 	_search_edit.text_submitted.connect(_on_github_search_submitted)
+	_search_prev_btn.pressed.connect(_on_search_prev_page_pressed)
+	_search_next_btn.pressed.connect(_on_search_next_page_pressed)
 	_add_to_my_list_btn.pressed.connect(_on_add_to_my_list_pressed)
 	_open_repo_btn.pressed.connect(_on_open_repo_page_pressed)
 	_open_al_btn.pressed.connect(_on_open_asset_lib_page_pressed)
@@ -266,6 +281,173 @@ func _merge_search_results(al: Dictionary, gh: Dictionary) -> Array:
 	return out
 
 
+func _search_cache_key(normalized_query: String, github_page: int) -> String:
+	return "%s|gh_page=%s" % [normalized_query, str(github_page)]
+
+
+func _duplicate_plugins_array(arr: Array) -> Array:
+	var out: Array = []
+	for e in arr:
+		if e is Dictionary:
+			out.append((e as Dictionary).duplicate(true))
+	return out
+
+
+func _store_search_page_cache(
+	key: String, merged_n: int, al_n: int, al_total: int
+) -> void:
+	_search_page_cache[key] = {
+		"plugins": _duplicate_plugins_array(_plugins),
+		"gh_total": _search_github_total_count,
+		"merged_n": merged_n,
+		"al_n": al_n,
+		"al_total": al_total,
+	}
+
+
+func _restore_search_page_from_cache(key: String) -> void:
+	var pack: Variant = _search_page_cache.get(key, {})
+	if not pack is Dictionary:
+		return
+	var dpack: Dictionary = pack
+	_plugins = _duplicate_plugins_array(dpack.get("plugins", []))
+	_search_github_total_count = int(dpack.get("gh_total", 0))
+	_showing_search_results = true
+	var merged_n := int(dpack.get("merged_n", 0))
+	var al_n := int(dpack.get("al_n", 0))
+	var al_total := int(dpack.get("al_total", 0))
+	var gh_total := _search_github_total_count
+	_clear_detail_panel()
+	_search_banner.text = (
+		"Asset Library + GitHub — %s repo(s) with releases (from %s merged). "
+		+ "GitHub hits need Godot-related topics + ≥1 release. "
+		+ "Asset Library: %s in raw list (~%s matches). GitHub ~%s indexed. "
+		+ "Use Prev/Next for more GitHub pages (cached pages skip API). Refresh restores your saved list."
+	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
+	_search_banner.visible = true
+	_update_search_pager()
+	_rebuild_plugin_cards()
+	_status(
+		"Search: %s rows (page %s · cached · GitHub ~%s)."
+		% [str(_plugins.size()), str(_search_github_page), str(gh_total)]
+	)
+
+
+func _max_github_search_pages() -> int:
+	if _search_github_total_count <= 0:
+		return 1
+	var cap := mini(_search_github_total_count, 1000)
+	return maxi(1, int(ceil(float(cap) / float(SEARCH_RESULTS_PER_PAGE))))
+
+
+func _update_search_pager() -> void:
+	if not is_instance_valid(_search_pager):
+		return
+	var show := _showing_search_results
+	_search_pager.visible = show
+	if not show:
+		return
+	var max_p := _max_github_search_pages()
+	if is_instance_valid(_search_prev_btn):
+		_search_prev_btn.disabled = _search_github_page <= 1
+	if is_instance_valid(_search_next_btn):
+		_search_next_btn.disabled = _search_github_page >= max_p
+	if is_instance_valid(_search_page_label):
+		_search_page_label.text = (
+			"Page %s / %s · GitHub ~%s hits (API shows up to ~1000)"
+			% [str(_search_github_page), str(max_p), str(_search_github_total_count)]
+		)
+
+
+func _on_search_prev_page_pressed() -> void:
+	if _search_github_page <= 1:
+		return
+	_search_github_page -= 1
+	await _run_paged_search(false)
+
+
+func _on_search_next_page_pressed() -> void:
+	if _search_github_page >= _max_github_search_pages():
+		return
+	_search_github_page += 1
+	await _run_paged_search(false)
+
+
+func _run_paged_search(reset_page: bool) -> void:
+	var q_input := _search_edit.text.strip_edges()
+	if q_input.is_empty():
+		return
+	var q := q_input
+	if not reset_page:
+		q = _search_active_query.strip_edges()
+		if q.is_empty():
+			q = q_input
+	if reset_page:
+		_search_github_page = 1
+	var qn := q.strip_edges().to_lower()
+	if reset_page:
+		if _search_cache_session_key != qn:
+			_search_page_cache.clear()
+		_search_cache_session_key = qn
+	var cache_key := _search_cache_key(qn, _search_github_page)
+	if _search_page_cache.has(cache_key):
+		_restore_search_page_from_cache(cache_key)
+		return
+	_clear_detail_panel()
+	_status("Searching Godot Asset Library and GitHub…")
+	var al_page := maxi(0, _search_github_page - 1)
+	var al_res: Dictionary = await _github.search_asset_library_plugins(
+		q, SEARCH_RESULTS_PER_PAGE, al_page
+	)
+	var gh_res: Dictionary = await _github.search_repositories(
+		q, _search_github_page, SEARCH_RESULTS_PER_PAGE
+	)
+	_update_rate_label()
+	if gh_res.get("ok", false):
+		_search_github_total_count = int(gh_res.get("total", 0))
+	else:
+		_search_github_total_count = 0
+	if not al_res.get("ok", false) and not gh_res.get("ok", false):
+		var e1 := str(al_res.get("error", ""))
+		var e2 := str(gh_res.get("error", ""))
+		_show_error("Search failed.\nAsset Library: %s\nGitHub: %s" % [e1, e2])
+		_status("Search failed.")
+		_showing_search_results = false
+		_update_search_pager()
+		return
+	if gh_res.get("ok", false):
+		var raw_items: Array = gh_res.get("items", [])
+		_status("Filtering GitHub results: require Godot-related topic tags…")
+		gh_res["items"] = await _filter_github_search_items_by_godot_topics(raw_items)
+	_plugins = _merge_search_results(al_res, gh_res)
+	var merged_n := _plugins.size()
+	_status("Filtering: keeping repos with ≥1 GitHub release…")
+	_plugins = await _filter_search_entries_with_releases(_plugins)
+	_showing_search_results = true
+	var al_total := 0
+	var al_n := 0
+	if al_res.get("ok", false):
+		al_total = int(al_res.get("total_matches", 0))
+		var ap: Variant = al_res.get("plugins", [])
+		al_n = ap.size() if ap is Array else 0
+	var gh_total: int = _search_github_total_count
+	_search_active_query = q.strip_edges()
+	_store_search_page_cache(cache_key, merged_n, al_n, al_total)
+	_search_banner.text = (
+		"Asset Library + GitHub — %s repo(s) with releases (from %s merged). "
+		+ "GitHub hits need Godot-related topics + ≥1 release. "
+		+ "Asset Library: %s in raw list (~%s matches). GitHub ~%s indexed. "
+		+ "Use Prev/Next for more GitHub pages (cached pages skip API). Refresh restores your saved list."
+	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
+	_search_banner.visible = true
+	_update_search_pager()
+	_rebuild_plugin_cards()
+	_status(
+		"Search: %s rows (page %s · Asset Library batch %s · GitHub ~%s)."
+		% [str(_plugins.size()), str(_search_github_page), str(al_n), str(gh_total)]
+	)
+
+
 func _filter_search_entries_with_releases(entries: Array) -> Array:
 	var out: Array = []
 	var idx := 0
@@ -290,48 +472,7 @@ func _filter_search_entries_with_releases(entries: Array) -> Array:
 
 
 func _on_github_search_pressed() -> void:
-	var q := _search_edit.text.strip_edges()
-	if q.is_empty():
-		return
-	_clear_detail_panel()
-	_status("Searching Godot Asset Library and GitHub…")
-	var al_res: Dictionary = await _github.search_asset_library_plugins(q, 15)
-	var gh_res: Dictionary = await _github.search_repositories(q)
-	_update_rate_label()
-	if not al_res.get("ok", false) and not gh_res.get("ok", false):
-		var e1 := str(al_res.get("error", ""))
-		var e2 := str(gh_res.get("error", ""))
-		_show_error("Search failed.\nAsset Library: %s\nGitHub: %s" % [e1, e2])
-		_status("Search failed.")
-		return
-	if gh_res.get("ok", false):
-		var raw_items: Array = gh_res.get("items", [])
-		_status("Filtering GitHub results: require Godot-related topic tags…")
-		gh_res["items"] = await _filter_github_search_items_by_godot_topics(raw_items)
-	_plugins = _merge_search_results(al_res, gh_res)
-	var merged_n := _plugins.size()
-	_status("Filtering: keeping repos with ≥1 GitHub release…")
-	_plugins = await _filter_search_entries_with_releases(_plugins)
-	_showing_search_results = true
-	var al_total := 0
-	var al_n := 0
-	if al_res.get("ok", false):
-		al_total = int(al_res.get("total_matches", 0))
-		var ap: Variant = al_res.get("plugins", [])
-		al_n = ap.size() if ap is Array else 0
-	var gh_total: int = int(gh_res.get("total", 0)) if gh_res.get("ok", false) else 0
-	_search_banner.text = (
-		"Asset Library + GitHub — %s repo(s) with releases (from %s merged). "
-		+ "GitHub hits need Godot-related topics + ≥1 release. "
-		+ "Asset Library: %s in raw list (~%s matches). GitHub index ~%s matches. "
-		+ "Press Refresh to return to your saved list."
-	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
-	_search_banner.visible = true
-	_rebuild_plugin_cards()
-	_status(
-		"Search: %s rows (Asset Library %s · GitHub ~%s)."
-		% [str(_plugins.size()), str(al_n), str(gh_total)]
-	)
+	await _run_paged_search(true)
 
 
 func _append_manual_repo_canonical(can: String) -> void:
@@ -554,8 +695,15 @@ func _on_refresh_pressed() -> void:
 
 func _refresh_plugin_list() -> void:
 	_showing_search_results = false
+	_search_github_page = 1
+	_search_github_total_count = 0
+	_search_active_query = ""
+	_search_cache_session_key = ""
+	_search_page_cache.clear()
 	if _search_banner:
 		_search_banner.visible = false
+	if is_instance_valid(_search_pager):
+		_search_pager.visible = false
 	_config = PSettings.load_config()
 	_github.set_token(PSettings.get_github_token(_config))
 	_status("Loading plugin list…")
