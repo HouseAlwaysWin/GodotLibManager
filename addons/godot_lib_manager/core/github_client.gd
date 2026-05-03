@@ -126,6 +126,24 @@ func fetch_releases(owner: String, repo: String) -> Dictionary:
 	return {"ok": true, "releases": parsed, "error": "", "code": res.code}
 
 
+## Probe GitHub for at least one release (`per_page=1`). Returns { has_releases, uncertain }.
+## If `uncertain` (API error), callers should not drop the repo.
+func check_repo_has_any_release(owner: String, repo: String) -> Dictionary:
+	var o := owner.strip_edges()
+	var r := repo.strip_edges()
+	if o.is_empty() or r.is_empty():
+		return {"has_releases": false, "uncertain": true}
+	var url := "%s/repos/%s/%s/releases?per_page=1" % [API_BASE, o.uri_encode(), r.uri_encode()]
+	var res: Dictionary = await _do_request(url, true)
+	if not res.ok:
+		return {"has_releases": false, "uncertain": true}
+	var parsed: Variant = JSON.parse_string(res.text)
+	if parsed == null or not parsed is Array:
+		return {"has_releases": false, "uncertain": true}
+	var arr: Array = parsed
+	return {"has_releases": arr.size() > 0, "uncertain": false}
+
+
 ## Latest release object or prerelease skipped? GitHub /releases/latest is latest non-draft stable.
 func fetch_latest(owner: String, repo: String) -> Dictionary:
 	var url := "%s/repos/%s/%s/releases/latest" % [API_BASE, owner.uri_encode(), repo.uri_encode()]

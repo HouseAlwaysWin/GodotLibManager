@@ -205,6 +205,29 @@ func _merge_search_results(al: Dictionary, gh: Dictionary) -> Array:
 	return out
 
 
+func _filter_search_entries_with_releases(entries: Array) -> Array:
+	var out: Array = []
+	var idx := 0
+	var total := entries.size()
+	for e in entries:
+		if not e is Dictionary:
+			continue
+		var d: Dictionary = e
+		var owner := str(d.get("owner", "")).strip_edges()
+		var repo := str(d.get("repo", "")).strip_edges()
+		if owner.is_empty() or repo.is_empty():
+			continue
+		idx += 1
+		_status("Checking GitHub releases (%s/%s)…" % [str(idx), str(total)])
+		var chk: Dictionary = await _github.check_repo_has_any_release(owner, repo)
+		_update_rate_label()
+		if chk.get("uncertain", false):
+			out.append(d)
+		elif chk.get("has_releases", false):
+			out.append(d)
+	return out
+
+
 func _on_github_search_pressed() -> void:
 	var q := _search_edit.text.strip_edges()
 	if q.is_empty():
@@ -221,6 +244,9 @@ func _on_github_search_pressed() -> void:
 		_status("Search failed.")
 		return
 	_plugins = _merge_search_results(al_res, gh_res)
+	var merged_n := _plugins.size()
+	_status("Filtering: keeping repos with ≥1 GitHub release…")
+	_plugins = await _filter_search_entries_with_releases(_plugins)
 	_showing_search_results = true
 	var al_total := 0
 	var al_n := 0
@@ -230,10 +256,10 @@ func _on_github_search_pressed() -> void:
 		al_n = ap.size() if ap is Array else 0
 	var gh_total: int = int(gh_res.get("total", 0)) if gh_res.get("ok", false) else 0
 	_search_banner.text = (
-		"Asset Library + GitHub — %s repo(s) (deduped). "
-		+ "Asset Library: %s in list (~%s matches). GitHub: ~%s matches. "
-		+ "Install still uses each repo’s GitHub releases. Press Refresh to return to your saved list."
-	) % [str(_plugins.size()), str(al_n), str(al_total), str(gh_total)]
+		"Asset Library + GitHub — %s repo(s) with releases (from %s merged; no-release repos removed). "
+		+ "Asset Library: %s in raw list (~%s matches). GitHub: ~%s matches. "
+		+ "Press Refresh to return to your saved list."
+	) % [str(_plugins.size()), str(merged_n), str(al_n), str(al_total), str(gh_total)]
 	_search_banner.visible = true
 	_rebuild_plugin_cards()
 	_status(
@@ -298,7 +324,10 @@ func _rebuild_plugin_cards() -> void:
 	if _plugins.is_empty():
 		var hint := Label.new()
 		if _showing_search_results:
-			hint.text = "No repositories matched. Try different keywords, or press Refresh."
+			hint.text = (
+				"No repositories with at least one GitHub release matched.\n"
+				+ "Try different keywords, or press Refresh."
+			)
 		else:
 			hint.text = "No plugins yet.\n• Use Search — results appear in this list.\n• Add repo… — paste owner/repo or a github.com URL.\n• Token… — optional PAT for higher API limits."
 		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
